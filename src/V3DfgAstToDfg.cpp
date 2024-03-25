@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -77,7 +77,7 @@ class AstToDfgVisitor final : public VNVisitor {
 
     // TYPES
     // Represents a driver during canonicalization
-    struct Driver {
+    struct Driver final {
         FileLine* m_fileline;
         DfgVertex* m_vtxp;
         uint32_t m_lsb;
@@ -439,11 +439,14 @@ class AstToDfgVisitor final : public VNVisitor {
         if (nodep->isSc()) return;
         // No need to (and in fact cannot) handle variables with unsupported dtypes
         if (!DfgVertex::isSupportedDType(nodep->dtypep())) return;
-        // Mark ports as having external references
-        if (nodep->isIO()) getNet(nodep)->setHasExtRefs();
-        // Mark variables that are the target of a hierarchical reference
-        // (these flags were set up in DataflowPrepVisitor)
-        if (nodep->user2()) getNet(nodep)->setHasExtRefs();
+
+        // Mark variables with external references
+        if (nodep->isIO()  // Ports
+            || nodep->user2()  // Target of a hierarchical reference
+            || nodep->isForceable()  // Forceable
+        ) {
+            getNet(nodep)->setHasExtRefs();
+        }
     }
 
     void visit(AstAssignW* nodep) override {

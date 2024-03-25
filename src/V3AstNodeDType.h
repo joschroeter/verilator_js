@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -52,7 +52,8 @@ public:
     ASTGEN_MEMBERS_AstNodeDType;
     // ACCESSORS
     void dump(std::ostream& str) const override;
-    virtual void dumpSmall(std::ostream& str) const;
+    void dumpJson(std::ostream& str) const override;
+    virtual void dumpSmall(std::ostream& str) const VL_MT_STABLE;
     bool hasDType() const override { return true; }
     /// Require VlUnpacked, instead of [] for POD elements.
     /// A non-POD object is always compound, but some POD elements
@@ -125,13 +126,13 @@ public:
     const char* charIQWN() const {
         return (isString() ? "N" : isWide() ? "W" : isQuad() ? "Q" : "I");
     }
-    string cType(const string& name, bool forFunc, bool isRef) const;
+    string cType(const string& name, bool forFunc, bool isRef, bool packed = false) const;
     // Represents a C++ LiteralType? (can be constexpr)
     bool isLiteralType() const VL_MT_STABLE;
 
 private:
     class CTypeRecursed;
-    CTypeRecursed cTypeRecurse(bool compound) const;
+    CTypeRecursed cTypeRecurse(bool compound, bool packed) const;
 };
 class AstNodeArrayDType VL_NOT_FINAL : public AstNodeDType {
     // Array data type, ie "some_dtype var_name [2:0]"
@@ -148,6 +149,7 @@ protected:
 public:
     ASTGEN_MEMBERS_AstNodeArrayDType;
     void dump(std::ostream& str) const override;
+    void dumpJson(std::ostream& str) const override;
     void dumpSmall(std::ostream& str) const override;
     const char* broken() const override {
         BROKEN_RTN(!((m_refDTypep && !childDTypep()) || (!m_refDTypep && childDTypep())));
@@ -212,6 +214,7 @@ public:
     ASTGEN_MEMBERS_AstNodeUOrStructDType;
     int uniqueNum() const { return m_uniqueNum; }
     void dump(std::ostream& str) const override;
+    void dumpJson(std::ostream& str) const override;
     bool isCompound() const override { return !packed(); }
     // For basicp() we reuse the size to indicate a "fake" basic type of same size
     AstBasicDType* basicp() const override {
@@ -339,7 +342,7 @@ public:
 class AstBasicDType final : public AstNodeDType {
     // Builtin atomic/vectored data type
     // @astgen op1 := rangep : Optional[AstRange] // Range of variable
-    struct Members {
+    struct Members final {
         VBasicDTypeKwd m_keyword;  // (also in VBasicTypeKey) What keyword created basic type
         VNumRange m_nrange;  // (also in VBasicTypeKey) Numeric msb/lsb (if non-opaque keyword)
         bool operator==(const Members& rhs) const {
@@ -377,6 +380,7 @@ private:
 public:
     ASTGEN_MEMBERS_AstBasicDType;
     void dump(std::ostream& str) const override;
+    void dumpJson(std::ostream& str) const override;
     // width/widthMin/numeric compared elsewhere
     bool same(const AstNode* samep) const override;
     bool similarDType(const AstNodeDType* samep) const override {
@@ -465,7 +469,7 @@ public:
         this->elementsp(elementsp);
     }
     ASTGEN_MEMBERS_AstBracketArrayDType;
-    bool similarDType(const AstNodeDType* samep) const override { V3ERROR_NA_RETURN(false); }
+    bool similarDType(const AstNodeDType* samep) const override { return same(samep); }
     AstNodeDType* subDTypep() const override VL_MT_STABLE { return childDTypep(); }
     // METHODS
     // Will be removed in V3Width, which relies on this
@@ -506,11 +510,17 @@ public:
     int widthAlignBytes() const override { return 8; }  // Assume
     int widthTotalBytes() const override { return 8; }  // Assume
     bool isCompound() const override { return true; }
-    static string typeToHold(uint64_t maxItem) {
-        return (maxItem < (1ULL << 8))    ? "CData"
-               : (maxItem < (1ULL << 16)) ? "SData"
-               : (maxItem < (1ULL << 32)) ? "IData"
-                                          : "QData";
+    static string typeToHold(int width) {
+        if (width <= 8)
+            return "CData";
+        else if (width <= 16)
+            return "SData";
+        else if (width <= VL_IDATASIZE)
+            return "IData";
+        else if (width <= VL_QUADSIZE)
+            return "QData";
+        else
+            return "VlWide<" + std::to_string(VL_WORDS_I(width)) + ">";
     }
 };
 class AstClassRefDType final : public AstNodeDType {
@@ -536,6 +546,7 @@ public:
         return this == samep || (type() == samep->type() && same(samep));
     }
     void dump(std::ostream& str = std::cout) const override;
+    void dumpJson(std::ostream& str = std::cout) const override;
     void dumpSmall(std::ostream& str) const override;
     string name() const override VL_MT_STABLE;
     AstBasicDType* basicp() const override VL_MT_STABLE { return nullptr; }
@@ -793,6 +804,7 @@ public:
     string name() const override VL_MT_STABLE { return m_name; }
     void name(const string& flag) override { m_name = flag; }
     void dump(std::ostream& str = std::cout) const override;
+    void dumpJson(std::ostream& str = std::cout) const override;
     void dumpSmall(std::ostream& str) const override;
     // METHODS
     AstBasicDType* basicp() const override VL_MT_STABLE { return subDTypep()->basicp(); }
@@ -811,6 +823,7 @@ public:
     TableMap& tableMap() { return m_tableMap; }
     const TableMap& tableMap() const { return m_tableMap; }
 };
+
 class AstIfaceRefDType final : public AstNodeDType {
     // Reference to an interface, either for a port, or inside parent cell
     // @astgen op1 := paramsp : List[AstPin]
@@ -846,8 +859,10 @@ public:
         addParamsp(paramsp);
     }
     ASTGEN_MEMBERS_AstIfaceRefDType;
+
     // METHODS
     void dump(std::ostream& str = std::cout) const override;
+    void dumpJson(std::ostream& str = std::cout) const override;
     void dumpSmall(std::ostream& str) const override;
     AstBasicDType* basicp() const override VL_MT_STABLE { return nullptr; }
     AstNodeDType* skipRefp() const override VL_MT_STABLE { return (AstNodeDType*)this; }
@@ -961,6 +976,7 @@ public:
     }
     ASTGEN_MEMBERS_AstParamTypeDType;
     void dump(std::ostream& str = std::cout) const override;
+    void dumpJson(std::ostream& str = std::cout) const override;
     AstNodeDType* getChildDTypep() const override { return childDTypep(); }
     AstNodeDType* subDTypep() const override VL_MT_STABLE {
         return dtypep() ? dtypep() : childDTypep();
@@ -1110,6 +1126,7 @@ public:
         return skipRefp()->similarDType(samep->skipRefp());
     }
     void dump(std::ostream& str = std::cout) const override;
+    void dumpJson(std::ostream& str = std::cout) const override;
     void dumpSmall(std::ostream& str) const override;
     string name() const override VL_MT_STABLE { return m_name; }
     string prettyDTypeName() const override {

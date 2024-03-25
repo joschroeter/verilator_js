@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -284,7 +284,7 @@ public:
 //######################################################################
 // DPI related utility functions
 
-struct TaskDpiUtils {
+struct TaskDpiUtils final {
     static std::vector<std::pair<AstUnpackArrayDType*, int>>
     unpackDimsAndStrides(AstNodeDType* dtypep) {
         std::vector<std::pair<AstUnpackArrayDType*, int>> dimStrides;
@@ -462,7 +462,7 @@ class TaskVisitor final : public VNVisitor {
             UINFO(9, "     Port " << portp << endl);
             UINFO(9, "      pin " << pinp << endl);
             if (inlineTask) {
-                pinp->unlinkFrBack();  // Relinked to assignment below
+                pushDeletep(pinp->unlinkFrBack());  // Cloned in assignment below
                 VL_DO_DANGLING(argp->unlinkFrBack()->deleteTree(), argp);  // Args no longer needed
             }
             if (portp->isWritable() && VN_IS(pinp, Const)) {
@@ -490,7 +490,6 @@ class TaskVisitor final : public VNVisitor {
                         AstVarScope* const localVscp = varrefp->varScopep();
                         UASSERT_OBJ(localVscp, varrefp, "Null var scope");
                         portp->user2p(localVscp);
-                        pushDeletep(pinp);
                     } else {
                         pinp->v3warn(E_TASKNSVAR, "Unsupported: ref argument of inlined "
                                                   "function/task is not a simple variable");
@@ -506,10 +505,11 @@ class TaskVisitor final : public VNVisitor {
                 AstVarScope* const newvscp
                     = createVarScope(portp, namePrefix + "__" + portp->shortName());
                 portp->user2p(newvscp);
-                if (!inlineTask)
+                if (!inlineTask) {
                     pinp->replaceWith(
                         new AstVarRef{newvscp->fileline(), newvscp, VAccess::READWRITE});
-
+                    pushDeletep(pinp);  // Cloned by connectPortMakeInAssign
+                }
                 // Put input assignment in FRONT of all other statements
                 AstAssign* const preassp = connectPortMakeInAssign(pinp, newvscp, true);
                 if (AstNode* const afterp = beginp->nextp()) {
@@ -527,8 +527,10 @@ class TaskVisitor final : public VNVisitor {
                 AstVarScope* const newvscp
                     = createVarScope(portp, namePrefix + "__" + portp->shortName());
                 portp->user2p(newvscp);
-                if (!inlineTask)
+                if (!inlineTask) {
                     pinp->replaceWith(new AstVarRef{newvscp->fileline(), newvscp, VAccess::WRITE});
+                    pushDeletep(pinp);  // Cloned by connectPortMakeOutAssign
+                }
                 AstAssign* const postassp = connectPortMakeOutAssign(portp, pinp, newvscp, false);
                 // Put assignment BEHIND of all other statements
                 beginp->addNext(postassp);
@@ -1033,11 +1035,10 @@ class TaskVisitor final : public VNVisitor {
 
                     if (portp->isDpiOpenArray()) {
                         AstNodeDType* const dtypep = portp->dtypep()->skipRefp();
-                        if (VN_IS(dtypep, DynArrayDType) || VN_IS(dtypep, QueueDType)) {
-                            v3fatalSrc("Passing dynamic array or queue as actual argument to DPI "
-                                       "open array is not yet supported");
-                        }
-
+                        UASSERT_OBJ(!VN_IS(dtypep, DynArrayDType) && !VN_IS(dtypep, QueueDType),
+                                    portp,
+                                    "Passing dynamic array or queue as actual argument to DPI "
+                                    "open array is not yet supported");
                         // Ideally we'd make a table of variable
                         // characteristics, and reuse it wherever we can
                         // At least put them into the module's CTOR as static?
@@ -1145,7 +1146,7 @@ class TaskVisitor final : public VNVisitor {
                     }
                     if (bdtypep->isDpiLogicVec()) {
                         portp->v3error("DPI function may not return a 4-state type "
-                                       "other than a single 'logic' (IEEE 1800-2017 35.5.5)");
+                                       "other than a single 'logic' (IEEE 1800-2023 35.5.5)");
                     }
                 }
             } else if (nodep->taskPublic()) {
@@ -1224,13 +1225,7 @@ class TaskVisitor final : public VNVisitor {
         }
         cfuncp->isVirtual(nodep->isVirtual());
         cfuncp->dpiPure(nodep->dpiPure());
-        if (nodep->name() == "new") {
-            cfuncp->isConstructor(true);
-            AstClass* const classp = m_statep->getClassp(nodep);
-            if (classp->extendsp()) {
-                cfuncp->baseCtors(EmitCBase::prefixNameProtect(classp->extendsp()->classp()));
-            }
-        }
+        if (nodep->name() == "new") cfuncp->isConstructor(true);
         if (cfuncp->dpiExportImpl()) cfuncp->cname(nodep->cname());
 
         if (!nodep->dpiImport() && !nodep->taskPublic()) {
@@ -1467,7 +1462,7 @@ class TaskVisitor final : public VNVisitor {
             if (nodep->taskp()->isFunction()) {
                 nodep->v3warn(
                     IGNOREDRETURN,
-                    "Ignoring return value of non-void function (IEEE 1800-2017 13.4.1)");
+                    "Ignoring return value of non-void function (IEEE 1800-2023 13.4.1)");
             }
             nodep->unlinkFrBack();
             VL_DO_DANGLING(nodep->deleteTree(), nodep);
@@ -1982,5 +1977,5 @@ void V3Task::taskAll(AstNetlist* nodep) {
         TaskStateVisitor visitors{nodep};
         const TaskVisitor visitor{nodep, &visitors};
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("task", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("task", 0, dumpTreeEitherLevel() >= 3);
 }

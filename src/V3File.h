@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -21,6 +21,7 @@
 #include "verilatedos.h"
 
 #include "V3Error.h"
+#include "V3Stats.h"
 
 #include <array>
 #include <fstream>
@@ -29,6 +30,8 @@
 #include <set>
 #include <stack>
 #include <vector>
+
+class AstNode;
 
 //============================================================================
 // V3File: Create streams, recording dependency information
@@ -122,6 +125,8 @@ private:
     int m_lineno = 1;
     int m_column = 0;
     int m_nobreak = false;  // Basic operator or begin paren, don't break next
+    int m_sourceLastLineno = 0;
+    int m_sourceLastFilenameno = 0;
     bool m_prependIndent = true;
     bool m_inStringLiteral = false;
     int m_indentLevel = 0;  // Current {} indentation
@@ -141,19 +146,25 @@ public:
     void blockIndent(int flag) { m_blockIndent = flag; }
     // METHODS
     void printf(const char* fmt...) VL_ATTR_PRINTF(2);
-    void puts(const char* strg);
-    void puts(const string& strg) { puts(strg.c_str()); }
+    void puts(const char* strg) { putns(nullptr, strg); }
+    void puts(const string& strg) { putns(nullptr, strg); }
+    void putns(const AstNode* nodep, const char* strg);
+    void putns(const AstNode* nodep, const string& strg) { putns(nodep, strg.c_str()); }
     void putsNoTracking(const string& strg);
     void putsQuoted(const string& strg);
     void putBreak();  // Print linebreak if line is too wide
     void putBreakExpr();  // Print linebreak in expression if line is too wide
     void putbs(const char* strg) {
         putBreakExpr();
-        puts(strg);
+        putns(nullptr, strg);
     }
     void putbs(const string& strg) {
         putBreakExpr();
-        puts(strg);
+        putns(nullptr, strg);
+    }
+    void putnbs(const AstNode* nodep, const string& strg) {
+        putBreakExpr();
+        putns(nodep, strg);
     }
     bool exceededWidth() const { return m_column > m_commaWidth; }
     void indentInc() { m_indentLevel += m_blockIndent; }
@@ -197,6 +208,7 @@ class V3OutFile VL_NOT_FINAL : public V3OutFormatter {
     // MEMBERS
     FILE* m_fp = nullptr;
     std::size_t m_usedBytes = 0;  // Number of bytes stored in m_bufferp
+    std::size_t m_writtenBytes = 0;  // Number of bytes written to output
     std::unique_ptr<std::array<char, WRITE_BUFFER_SIZE_BYTES>> m_bufferp;  // Write buffer
 
 public:
@@ -205,16 +217,23 @@ public:
     V3OutFile& operator=(const V3OutFile&) = delete;
     V3OutFile(V3OutFile&&) = delete;
     V3OutFile& operator=(V3OutFile&&) = delete;
-
     ~V3OutFile() override;
+
     void putsForceIncs();
+
+    void statRecordWritten() {
+        writeBlock();
+        V3Stats::addStatSum(V3Stats::STAT_CPP_CHARS, m_writtenBytes);
+    }
 
 private:
     void writeBlock() {
-        if (VL_LIKELY(m_usedBytes > 0)) fwrite(m_bufferp->data(), m_usedBytes, 1, m_fp);
-        m_usedBytes = 0;
+        if (VL_LIKELY(m_usedBytes > 0)) {
+            fwrite(m_bufferp->data(), m_usedBytes, 1, m_fp);
+            m_writtenBytes += m_usedBytes;
+            m_usedBytes = 0;
+        }
     }
-
     // CALLBACKS
     void putcOutput(char chr) override {
         m_bufferp->at(m_usedBytes++) = chr;
@@ -247,7 +266,7 @@ public:
         : V3OutFile{filename, lang} {
         resetPrivate();
     }
-    ~V3OutCFile() override = default;
+    ~V3OutCFile() override { statRecordWritten(); }
     virtual void putsHeader() { puts("// Verilated -*- C++ -*-\n"); }
     virtual void putsIntTopInclude() { putsForceIncs(); }
     virtual void putsGuard();

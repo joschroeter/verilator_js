@@ -3,7 +3,7 @@
 //
 // Code available from: https://verilator.org
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you can
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you can
 // redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -130,7 +130,7 @@ public:
     VlProcess()
         : m_state{RUNNING} {}
     // Construct child process of parent
-    VlProcess(VlProcessRef parentp)
+    explicit VlProcess(VlProcessRef parentp)
         : m_state{RUNNING}
         , m_parentp{parentp} {
         m_parentp->attach(this);
@@ -263,7 +263,7 @@ public:
 inline std::string VL_TO_STRING(const VlEventBase& e);
 
 inline std::string VL_TO_STRING(const VlEvent& e) {
-    return std::string{"triggered="} + (e.isTriggered() ? "true" : "false");
+    return "triggered="s + (e.isTriggered() ? "true" : "false");
 }
 
 inline std::string VL_TO_STRING(const VlAssignableEvent& e) {
@@ -274,7 +274,7 @@ inline std::string VL_TO_STRING(const VlEventBase& e) {
     if (const VlAssignableEvent& assignable = dynamic_cast<const VlAssignableEvent&>(e)) {
         return VL_TO_STRING(assignable);
     }
-    return std::string{"triggered="} + (e.isTriggered() ? "true" : "false");
+    return "triggered="s + (e.isTriggered() ? "true" : "false");
 }
 
 //===================================================================
@@ -613,6 +613,11 @@ public:
         m_deque.insert(m_deque.begin() + index, value);
     }
 
+    // inside (set membership operator)
+    bool inside(const T_Value& value) const {
+        return std::find(m_deque.cbegin(), m_deque.cend(), value) != m_deque.cend();
+    }
+
     // Return slice q[lsb:msb]
     VlQueue slice(int32_t lsb, int32_t msb) const {
         VlQueue out;
@@ -771,13 +776,13 @@ public:
     // Reduction operators
     VlQueue min() const {
         if (m_deque.empty()) return VlQueue{};
-        const auto it = std::min_element(m_deque.begin(), m_deque.end());
+        const auto it = std::min_element(m_deque.cbegin(), m_deque.cend());
         return VlQueue::cons(*it);
     }
     template <typename Func>
     VlQueue min(Func with_func) const {
         if (m_deque.empty()) return VlQueue{};
-        const auto it = std::min_element(m_deque.begin(), m_deque.end(),
+        const auto it = std::min_element(m_deque.cbegin(), m_deque.cend(),
                                          [&with_func](const IData& a, const IData& b) {
                                              return with_func(0, a) < with_func(0, b);
                                          });
@@ -785,13 +790,13 @@ public:
     }
     VlQueue max() const {
         if (m_deque.empty()) return VlQueue{};
-        const auto it = std::max_element(m_deque.begin(), m_deque.end());
+        const auto it = std::max_element(m_deque.cbegin(), m_deque.cend());
         return VlQueue::cons(*it);
     }
     template <typename Func>
     VlQueue max(Func with_func) const {
         if (m_deque.empty()) return VlQueue{};
-        const auto it = std::max_element(m_deque.begin(), m_deque.end(),
+        const auto it = std::max_element(m_deque.cbegin(), m_deque.cend(),
                                          [&with_func](const IData& a, const IData& b) {
                                              return with_func(0, a) < with_func(0, b);
                                          });
@@ -812,40 +817,40 @@ public:
     }
     T_Value r_product() const {
         if (m_deque.empty()) return T_Value(0);
-        auto it = m_deque.begin();
+        auto it = m_deque.cbegin();
         T_Value out{*it};
         ++it;
-        for (; it != m_deque.end(); ++it) out *= *it;
+        for (; it != m_deque.cend(); ++it) out *= *it;
         return out;
     }
     template <typename Func>
     T_Value r_product(Func with_func) const {
         if (m_deque.empty()) return T_Value(0);
-        auto it = m_deque.begin();
+        auto it = m_deque.cbegin();
         IData index = 0;
         T_Value out{with_func(index, *it)};
         ++it;
         ++index;
-        for (; it != m_deque.end(); ++it) out *= with_func(index++, *it);
+        for (; it != m_deque.cend(); ++it) out *= with_func(index++, *it);
         return out;
     }
     T_Value r_and() const {
         if (m_deque.empty()) return T_Value(0);
-        auto it = m_deque.begin();
+        auto it = m_deque.cbegin();
         T_Value out{*it};
         ++it;
-        for (; it != m_deque.end(); ++it) out &= *it;
+        for (; it != m_deque.cend(); ++it) out &= *it;
         return out;
     }
     template <typename Func>
     T_Value r_and(Func with_func) const {
         if (m_deque.empty()) return T_Value(0);
-        auto it = m_deque.begin();
+        auto it = m_deque.cbegin();
         IData index = 0;
         T_Value out{with_func(index, *it)};
         ++it;
         ++index;
-        for (; it != m_deque.end(); ++it) out &= with_func(index, *it);
+        for (; it != m_deque.cend(); ++it) out &= with_func(index, *it);
         return out;
     }
     T_Value r_or() const {
@@ -943,7 +948,7 @@ public:
     // Return last element.  Verilog: function int last(ref index)
     int last(T_Key& indexr) const {
         const auto it = m_map.crbegin();
-        if (it == m_map.rend()) return 0;
+        if (it == m_map.crend()) return 0;
         indexr = it->first;
         return 1;
     }
@@ -1072,7 +1077,7 @@ public:
     template <typename Func>
     VlQueue<T_Value> find_first(Func with_func) const {
         const auto it
-            = std::find_if(m_map.begin(), m_map.end(), [=](const std::pair<T_Key, T_Value>& i) {
+            = std::find_if(m_map.cbegin(), m_map.cend(), [=](const std::pair<T_Key, T_Value>& i) {
                   return with_func(i.first, i.second);
               });
         if (it == m_map.end()) return VlQueue<T_Value>{};
@@ -1081,7 +1086,7 @@ public:
     template <typename Func>
     VlQueue<T_Key> find_first_index(Func with_func) const {
         const auto it
-            = std::find_if(m_map.begin(), m_map.end(), [=](const std::pair<T_Key, T_Value>& i) {
+            = std::find_if(m_map.cbegin(), m_map.cend(), [=](const std::pair<T_Key, T_Value>& i) {
                   return with_func(i.first, i.second);
               });
         if (it == m_map.end()) return VlQueue<T_Value>{};
@@ -1089,19 +1094,17 @@ public:
     }
     template <typename Func>
     VlQueue<T_Value> find_last(Func with_func) const {
-        const auto it
-            = std::find_if(m_map.rbegin(), m_map.rend(), [=](const std::pair<T_Key, T_Value>& i) {
-                  return with_func(i.first, i.second);
-              });
+        const auto it = std::find_if(
+            m_map.crbegin(), m_map.crend(),
+            [=](const std::pair<T_Key, T_Value>& i) { return with_func(i.first, i.second); });
         if (it == m_map.rend()) return VlQueue<T_Value>{};
         return VlQueue<T_Value>::cons(it->second);
     }
     template <typename Func>
     VlQueue<T_Key> find_last_index(Func with_func) const {
-        const auto it
-            = std::find_if(m_map.rbegin(), m_map.rend(), [=](const std::pair<T_Key, T_Value>& i) {
-                  return with_func(i.first, i.second);
-              });
+        const auto it = std::find_if(
+            m_map.crbegin(), m_map.crend(),
+            [=](const std::pair<T_Key, T_Value>& i) { return with_func(i.first, i.second); });
         if (it == m_map.rend()) return VlQueue<T_Value>{};
         return VlQueue<T_Key>::cons(it->first);
     }
@@ -1110,7 +1113,7 @@ public:
     VlQueue<T_Value> min() const {
         if (m_map.empty()) return VlQueue<T_Value>();
         const auto it = std::min_element(
-            m_map.begin(), m_map.end(),
+            m_map.cbegin(), m_map.cend(),
             [](const std::pair<T_Key, T_Value>& a, const std::pair<T_Key, T_Value>& b) {
                 return a.second < b.second;
             });
@@ -1120,7 +1123,7 @@ public:
     VlQueue<T_Value> min(Func with_func) const {
         if (m_map.empty()) return VlQueue<T_Value>();
         const auto it = std::min_element(
-            m_map.begin(), m_map.end(),
+            m_map.cbegin(), m_map.cend(),
             [&with_func](const std::pair<T_Key, T_Value>& a, const std::pair<T_Key, T_Value>& b) {
                 return with_func(a.first, a.second) < with_func(b.first, b.second);
             });
@@ -1129,7 +1132,7 @@ public:
     VlQueue<T_Value> max() const {
         if (m_map.empty()) return VlQueue<T_Value>();
         const auto it = std::max_element(
-            m_map.begin(), m_map.end(),
+            m_map.cbegin(), m_map.cend(),
             [](const std::pair<T_Key, T_Value>& a, const std::pair<T_Key, T_Value>& b) {
                 return a.second < b.second;
             });
@@ -1139,7 +1142,7 @@ public:
     VlQueue<T_Value> max(Func with_func) const {
         if (m_map.empty()) return VlQueue<T_Value>();
         const auto it = std::max_element(
-            m_map.begin(), m_map.end(),
+            m_map.cbegin(), m_map.cend(),
             [&with_func](const std::pair<T_Key, T_Value>& a, const std::pair<T_Key, T_Value>& b) {
                 return with_func(a.first, a.second) < with_func(b.first, b.second);
             });
@@ -1159,36 +1162,36 @@ public:
     }
     T_Value r_product() const {
         if (m_map.empty()) return T_Value(0);
-        auto it = m_map.begin();
+        auto it = m_map.cbegin();
         T_Value out{it->second};
         ++it;
-        for (; it != m_map.end(); ++it) out *= it->second;
+        for (; it != m_map.cend(); ++it) out *= it->second;
         return out;
     }
     template <typename Func>
     T_Value r_product(Func with_func) const {
         if (m_map.empty()) return T_Value(0);
-        auto it = m_map.begin();
+        auto it = m_map.cbegin();
         T_Value out{with_func(it->first, it->second)};
         ++it;
-        for (; it != m_map.end(); ++it) out *= with_func(it->first, it->second);
+        for (; it != m_map.cend(); ++it) out *= with_func(it->first, it->second);
         return out;
     }
     T_Value r_and() const {
         if (m_map.empty()) return T_Value(0);
-        auto it = m_map.begin();
+        auto it = m_map.cbegin();
         T_Value out{it->second};
         ++it;
-        for (; it != m_map.end(); ++it) out &= it->second;
+        for (; it != m_map.cend(); ++it) out &= it->second;
         return out;
     }
     template <typename Func>
     T_Value r_and(Func with_func) const {
         if (m_map.empty()) return T_Value(0);
-        auto it = m_map.begin();
+        auto it = m_map.cbegin();
         T_Value out{with_func(it->first, it->second)};
         ++it;
-        for (; it != m_map.end(); ++it) out &= with_func(it->first, it->second);
+        for (; it != m_map.cend(); ++it) out &= with_func(it->first, it->second);
         return out;
     }
     T_Value r_or() const {
@@ -1307,6 +1310,11 @@ public:
     void assign(const VlUnpacked<T_Value, T_Depth>& that) { *this = that; }
     bool operator==(const VlUnpacked<T_Value, T_Depth>& that) const { return !neq(that); }
     bool operator!=(const VlUnpacked<T_Value, T_Depth>& that) { return neq(that); }
+
+    // inside (set membership operator)
+    bool inside(const T_Value& value) const {
+        return std::find(std::begin(m_storage), std::end(m_storage), value) != std::end(m_storage);
+    }
 
     void sort() { std::sort(std::begin(m_storage), std::end(m_storage)); }
     template <typename Func>
@@ -1582,7 +1590,7 @@ public:
 // Represents the null pointer. Used for setting VlClassRef to null instead of
 // via nullptr_t, to prevent the implicit conversion of 0 to nullptr.
 
-struct VlNull {
+struct VlNull final {
     operator bool() const { return false; }
 };
 
@@ -1638,7 +1646,7 @@ public:
     }
     // cppcheck-suppress noExplicitConstructor
     VlClassRef(VlClassRef&& moved)
-        : m_objp{vlstd::exchange(moved.m_objp, nullptr)} {}
+        : m_objp{std::exchange(moved.m_objp, nullptr)} {}
     // cppcheck-suppress noExplicitConstructor
     template <typename T_OtherClass>
     VlClassRef(const VlClassRef<T_OtherClass>& copied)
@@ -1648,7 +1656,7 @@ public:
     // cppcheck-suppress noExplicitConstructor
     template <typename T_OtherClass>
     VlClassRef(VlClassRef<T_OtherClass>&& moved)
-        : m_objp{vlstd::exchange(moved.m_objp, nullptr)} {}
+        : m_objp{std::exchange(moved.m_objp, nullptr)} {}
     ~VlClassRef() { refCountDec(); }
 
     // METHODS
@@ -1663,7 +1671,7 @@ public:
     VlClassRef& operator=(VlClassRef&& moved) {
         if (m_objp == moved.m_objp) return *this;
         refCountDec();
-        m_objp = vlstd::exchange(moved.m_objp, nullptr);
+        m_objp = std::exchange(moved.m_objp, nullptr);
         return *this;
     }
     template <typename T_OtherClass>
@@ -1678,7 +1686,7 @@ public:
     VlClassRef& operator=(VlClassRef<T_OtherClass>&& moved) {
         if (m_objp == moved.m_objp) return *this;
         refCountDec();
-        m_objp = vlstd::exchange(moved.m_objp, nullptr);
+        m_objp = std::exchange(moved.m_objp, nullptr);
         return *this;
     }
     // Assign with nullptr
@@ -1697,7 +1705,7 @@ public:
     T_Class* operator->() const { return m_objp; }
     // For 'if (ptr)...'
     operator bool() const { return m_objp; }
-    // In SV A == B iff both are handles to the same object (IEEE 1800-2017 8.4)
+    // In SV A == B iff both are handles to the same object (IEEE 1800-2023 8.4)
     template <typename T_OtherClass>
     bool operator==(const VlClassRef<T_OtherClass>& rhs) const {
         return m_objp == rhs.m_objp;
@@ -1741,7 +1749,7 @@ template <typename T_Sampled>
 class VlSampleQueue final {
     // TYPES
     // Type representing a single value sample at a point in time
-    struct VlSample {
+    struct VlSample final {
         uint64_t m_timestamp;  // Timestamp at which the value was sampled
         T_Sampled m_value;  // The sampled value
     };

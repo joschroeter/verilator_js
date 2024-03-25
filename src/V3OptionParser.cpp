@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -26,7 +26,7 @@
 
 //######################################################################
 // V3OptionParser::Impl
-struct V3OptionParser::Impl {
+struct V3OptionParser::Impl final {
     // TYPES
 
     // Setting for isOnOffAllowed() and isPartialMatchAllowed()
@@ -114,15 +114,32 @@ V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbCall, void(void), m_cb(), en::NONE);
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbFOnOff, void(bool), m_cb(!hasPrefixFNo(optp)),
                                  en::FONOFF);
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbOnOff, void(bool), m_cb(!hasPrefixNo(optp)), en::ONOFF);
-template <>
-V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbVal<int>, void(int), m_cb(std::atoi(argp)), en::VALUE);
-template <>
-V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbVal<const char*>, void(const char*), m_cb(argp),
-                                 en::VALUE);
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbPartialMatch, void(const char*), m_cb(optp), en::NONE,
                                  true);
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbPartialMatchVal, void(const char*, const char*),
                                  m_cb(optp, argp), en::VALUE, true);
+
+template <>
+class V3OptionParser::Impl::ActionCbVal<int> final : public ActionBase<en::VALUE> {
+    std::function<void(int)> m_cb;
+
+public:
+    using CbType = std::function<void(int)>;
+    explicit ActionCbVal(CbType cb)
+        : m_cb(std::move(cb)) {}
+    void exec(const char* optp, const char* argp) override { m_cb(std::atoi(argp)); }
+};
+
+template <>
+class V3OptionParser::Impl::ActionCbVal<const char*> final : public ActionBase<en::VALUE> {
+    std::function<void(const char*)> m_cb;
+
+public:
+    using CbType = std::function<void(const char*)>;
+    explicit ActionCbVal(CbType cb)
+        : m_cb(std::move(cb)) {}
+    void exec(const char* optp, const char* argp) override { m_cb(argp); }
+};
 
 #undef V3OPTION_PARSER_DEF_ACT_CB_CLASS
 
@@ -145,9 +162,7 @@ V3OptionParser::ActionIfs* V3OptionParser::find(const char* optp) {
         if (act.second->isOnOffAllowed()) {  // Find starts with "-no"
             if (const char* const nop
                 = VString::startsWith(optp, "-no") ? (optp + std::strlen("-no")) : nullptr) {
-                if (act.first == nop || act.first == (std::string{"-"} + nop)) {
-                    return act.second.get();
-                }
+                if (act.first == nop || act.first == ("-"s + nop)) { return act.second.get(); }
             }
         } else if (act.second->isPartialMatchAllowed()) {
             if (VString::startsWith(optp, act.first)) return act.second.get();

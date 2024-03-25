@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -25,6 +25,9 @@
 #include "V3Class.h"
 
 #include "V3UniqueNames.h"
+
+#include <queue>
+#include <set>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
 
@@ -46,8 +49,39 @@ class ClassVisitor final : public VNVisitor {
     const AstNodeFTask* m_ftaskp = nullptr;  // Current task
     std::vector<std::pair<AstNode*, AstScope*>> m_toScopeMoves;
     std::vector<std::pair<AstNode*, AstNodeModule*>> m_toPackageMoves;
+    std::set<AstTypedef*> m_typedefps;  // Contains all typedef nodes
+    std::set<AstNodeUOrStructDType*> m_strDtypeps;  // Contains all packed structs and unions
+    // Contains all public packed structs and unions, using a queue to
+    // mark embedded struct / union public by BFS
+    std::queue<AstNodeUOrStructDType*> m_pubStrDtypeps;
 
     // METHODS
+
+    bool recurseImplements(AstClass* nodep, bool setit) {
+        // Returns true to set useVirtualPublic().
+        // If there's an implements of an interface class then we have
+        // multiple classes that point to same object, that need same
+        // VlClass (the diamond problem). C++ will require we use 'virtual
+        // public' for VlClass.  So, we need the interface class, and all
+        // classes above, and any below using any implements to use
+        // 'virtual public' via useVirtualPublic().
+        if (nodep->useVirtualPublic()) return true;  // Short-circuit
+        if (nodep->isInterfaceClass()) setit = true;
+        for (const AstClassExtends* extp = nodep->extendsp(); extp;
+             extp = VN_AS(extp->nextp(), ClassExtends)) {
+            if (recurseImplements(extp->classp(), setit)) setit = true;
+        }
+        if (setit) {
+            nodep->useVirtualPublic(true);
+            for (const AstClassExtends* extp = nodep->extendsp(); extp;
+                 extp = VN_AS(extp->nextp(), ClassExtends)) {
+                (void)recurseImplements(extp->classp(), true);
+            }
+        }
+        return setit;
+    }
+
+    // VISITORS
 
     void visit(AstClass* nodep) override {
         if (nodep->user1SetOnce()) return;
@@ -55,6 +89,7 @@ class ClassVisitor final : public VNVisitor {
         nodep->name(m_prefix + nodep->name());
         nodep->unlinkFrBack();
         v3Global.rootp()->addModulesp(nodep);
+        (void)recurseImplements(nodep, false);
         // Make containing package
         // Note origName is the same as the class origName so errors look correct
         AstClassPackage* const packagep
@@ -177,22 +212,27 @@ class ClassVisitor final : public VNVisitor {
         dtypep->classOrPackagep(m_classPackagep ? m_classPackagep : m_modp);
         dtypep->name(
             m_names.get(dtypep->name() + (VN_IS(dtypep, UnionDType) ? "__union" : "__struct")));
+        if (dtypep->packed()) m_strDtypeps.insert(dtypep);
 
         for (const AstMemberDType* itemp = dtypep->membersp(); itemp;
              itemp = VN_AS(itemp->nextp(), MemberDType)) {
             AstNodeUOrStructDType* const subp = itemp->getChildStructp();
-            // Recurse only into anonymous unpacked structs inside this definition,
-            // other unpacked structs will be reached from another typedefs
-            if (subp && !subp->packed() && subp->name().empty()) setStructModulep(subp);
+            // Recurse only into anonymous structs inside this definition,
+            // other structs will be reached from another typedefs
+            if (subp && subp->name().empty()) setStructModulep(subp);
         }
     }
     void visit(AstTypedef* nodep) override {
         if (nodep->user1SetOnce()) return;
+        AstNodeUOrStructDType* const dtypep = VN_CAST(nodep->dtypep(), NodeUOrStructDType);
+        if (dtypep && dtypep->packed()) {
+            m_typedefps.insert(nodep);
+            if (nodep->attrPublic()) m_pubStrDtypeps.push(dtypep);
+        }
         iterateChildren(nodep);
         if (m_classPackagep) m_classPackagep->addStmtsp(nodep->unlinkFrBack());
 
-        AstNodeUOrStructDType* const dtypep = VN_CAST(nodep->dtypep(), NodeUOrStructDType);
-        if (dtypep && !dtypep->packed()) {
+        if (dtypep) {
             dtypep->name(nodep->name());
             setStructModulep(dtypep);
         }
@@ -231,6 +271,28 @@ public:
             nodep->unlinkFrBack();
             modp->addStmtsp(nodep);
         }
+        // BFS to mark public typedefs.
+        std::set<AstNodeUOrStructDType*> pubStrDtypeps;
+        while (!m_pubStrDtypeps.empty()) {
+            AstNodeUOrStructDType* const dtypep = m_pubStrDtypeps.front();
+            m_pubStrDtypeps.pop();
+            if (pubStrDtypeps.insert(dtypep).second) {
+                for (const AstMemberDType* itemp = dtypep->membersp(); itemp;
+                     itemp = VN_AS(itemp->nextp(), MemberDType)) {
+                    if (AstNodeUOrStructDType* const subp = itemp->getChildStructp())
+                        m_pubStrDtypeps.push(subp);
+                }
+            }
+        }
+        for (AstTypedef* typedefp : m_typedefps) {
+            AstNodeUOrStructDType* const sdtypep = VN_AS(typedefp->dtypep(), NodeUOrStructDType);
+            if (pubStrDtypeps.count(sdtypep)) typedefp->attrPublic(true);
+        }
+        // Clear package pointer of non-public packed struct / union type, which will never be
+        // exported.
+        for (AstNodeUOrStructDType* sdtypep : m_strDtypeps) {
+            if (!pubStrDtypeps.count(sdtypep)) sdtypep->classOrPackagep(nullptr);
+        }
     }
 };
 
@@ -240,5 +302,5 @@ public:
 void V3Class::classAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { ClassVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("class", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("class", 0, dumpTreeEitherLevel() >= 3);
 }

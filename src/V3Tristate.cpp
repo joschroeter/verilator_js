@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -408,7 +408,7 @@ class TristateVisitor final : public TristateBaseVisitor {
     AstUser3Allocator<AstVar, AuxAstVar> m_varAux;
 
     // TYPES
-    struct RefStrength {
+    struct RefStrength final {
         AstVarRef* m_varrefp;
         VStrength m_strength;
         RefStrength(AstVarRef* varrefp, VStrength strength)
@@ -416,7 +416,7 @@ class TristateVisitor final : public TristateBaseVisitor {
             , m_strength{strength} {}
     };
     using RefStrengthVec = std::vector<RefStrength>;
-    using VarMap = std::unordered_map<AstVar*, RefStrengthVec*>;
+    using VarMap = std::map<AstVar*, RefStrengthVec*>;
     using Assigns = std::vector<AstAssignW*>;
     using VarToAssignsMap = std::map<AstVar*, Assigns>;
     enum : uint8_t {
@@ -632,9 +632,9 @@ class TristateVisitor final : public TristateBaseVisitor {
         // Now go through the lhs driver map and generate the output
         // enable logic for any tristates.
         // Note there might not be any drivers.
-        for (VarMap::iterator nextit, it = m_lhsmap.begin(); it != m_lhsmap.end(); it = nextit) {
-            nextit = it;
-            ++nextit;
+        for (auto varp : vars) {  // Use vector instead of m_lhsmap iteration for node stability
+            const auto it = m_lhsmap.find(varp);
+            if (it == m_lhsmap.end()) continue;
             AstVar* const invarp = it->first;
             RefStrengthVec* refsp = it->second;
             // Figure out if this var needs tristate expanded.
@@ -660,20 +660,19 @@ class TristateVisitor final : public TristateBaseVisitor {
 
         for (auto it = beginStrength; it != endStrength; it++) {
             AstVarRef* refp = it->m_varrefp;
-            const int w = varp->width();
 
             // create the new lhs driver for this var
             AstVar* const newLhsp = new AstVar{varp->fileline(), VVarType::MODULETEMP,
                                                varp->name() + "__out" + cvtToStr(m_unique),
-                                               VFlagBitPacked{}, w};  // 2-state ok; sep enable
+                                               varp};  // 2-state ok; sep enable
             UINFO(9, "       newout " << newLhsp << endl);
             nodep->addStmtsp(newLhsp);
             refp->varp(newLhsp);
 
             // create a new var for this drivers enable signal
-            AstVar* const newEnLhsp = new AstVar{varp->fileline(), VVarType::MODULETEMP,
-                                                 varp->name() + "__en" + cvtToStr(m_unique++),
-                                                 VFlagBitPacked{}, w};  // 2-state ok
+            AstVar* const newEnLhsp
+                = new AstVar{varp->fileline(), VVarType::MODULETEMP,
+                             varp->name() + "__en" + cvtToStr(m_unique++), envarp};  // 2-state ok
             UINFO(9, "       newenlhsp " << newEnLhsp << endl);
             nodep->addStmtsp(newEnLhsp);
 
@@ -739,7 +738,6 @@ class TristateVisitor final : public TristateBaseVisitor {
 
         AstNodeExpr* orp = nullptr;
         AstNodeExpr* enp = nullptr;
-        const int w = lhsp->width();
 
         std::sort(refsp->begin(), refsp->end(),
                   [](RefStrength a, RefStrength b) { return a.m_strength > b.m_strength; });
@@ -756,13 +754,13 @@ class TristateVisitor final : public TristateBaseVisitor {
 
             // var__strength variable
             AstVar* varStrengthp = new AstVar{fl, VVarType::MODULETEMP, strengthVarName,
-                                              VFlagBitPacked{}, w};  // 2-state ok; sep enable;
+                                              invarp};  // 2-state ok; sep enable;
             UINFO(9, "       newstrength " << varStrengthp << endl);
             nodep->addStmtsp(varStrengthp);
 
             // var__strength__en variable
             AstVar* enVarStrengthp = new AstVar{fl, VVarType::MODULETEMP, strengthVarName + "__en",
-                                                VFlagBitPacked{}, w};  // 2-state ok;
+                                                invarp};  // 2-state ok;
             UINFO(9, "       newenstrength " << enVarStrengthp << endl);
             nodep->addStmtsp(enVarStrengthp);
 
@@ -1814,5 +1812,5 @@ public:
 void V3Tristate::tristateAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { TristateVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("tristate", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("tristate", 0, dumpTreeEitherLevel() >= 3);
 }

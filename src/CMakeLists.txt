@@ -4,7 +4,7 @@
 #
 #*****************************************************************************
 #
-# Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+# Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 # can redistribute it and/or modify it under the terms of either the GNU
 # Lesser General Public License Version 3 or the Perl Artistic License
 # Version 2.0.
@@ -62,8 +62,10 @@ set(HEADERS
     V3DepthBlock.h
     V3Descope.h
     V3Dfg.h
+    V3DfgCache.h
     V3DfgOptimizer.h
     V3DfgPasses.h
+    V3DfgPatternStats.h
     V3DfgPeephole.h
     V3DfgVertices.h
     V3DupFinder.h
@@ -77,6 +79,7 @@ set(HEADERS
     V3EmitV.h
     V3EmitXml.h
     V3Error.h
+    V3ExecGraph.h
     V3Expand.h
     V3File.h
     V3FileLine.h
@@ -119,6 +122,7 @@ set(HEADERS
     V3OptionParser.h
     V3Options.h
     V3Order.h
+    V3OrderInternal.h
     V3OrderGraph.h
     V3OrderMoveGraph.h
     V3Os.h
@@ -127,10 +131,9 @@ set(HEADERS
     V3Parse.h
     V3ParseImp.h
     V3ParseSym.h
-    V3Partition.h
-    V3PartitionGraph.h
     V3PchAstMT.h
     V3PchAstNoMT.h
+    V3PreExpr.h
     V3PreLex.h
     V3PreProc.h
     V3PreShell.h
@@ -149,6 +152,7 @@ set(HEADERS
     V3Split.h
     V3SplitAs.h
     V3SplitVar.h
+    V3StackCount.h
     V3Stats.h
     V3StdFuture.h
     V3String.h
@@ -211,11 +215,13 @@ set(COMMON_SOURCES
     V3Descope.cpp
     V3Dfg.cpp
     V3DfgAstToDfg.cpp
+    V3DfgCache.cpp
     V3DfgDecomposition.cpp
     V3DfgDfgToAst.cpp
     V3DfgOptimizer.cpp
     V3DfgPasses.cpp
     V3DfgPeephole.cpp
+    V3DfgRegularize.cpp
     V3DupFinder.cpp
     V3Timing.cpp
     V3EmitCBase.cpp
@@ -233,6 +239,7 @@ set(COMMON_SOURCES
     V3EmitV.cpp
     V3EmitXml.cpp
     V3Error.cpp
+    V3ExecGraph.cpp
     V3Expand.cpp
     V3File.cpp
     V3FileLine.cpp
@@ -258,8 +265,8 @@ set(COMMON_SOURCES
     V3LinkDot.cpp
     V3LinkInc.cpp
     V3LinkJump.cpp
-    V3LinkLevel.cpp
     V3LinkLValue.cpp
+    V3LinkLevel.cpp
     V3LinkParse.cpp
     V3LinkResolve.cpp
     V3Localize.cpp
@@ -269,9 +276,13 @@ set(COMMON_SOURCES
     V3OptionParser.cpp
     V3Options.cpp
     V3Order.cpp
+    V3OrderGraphBuilder.cpp
+    V3OrderMoveGraph.cpp
+    V3OrderParallel.cpp
+    V3OrderProcessDomains.cpp
+    V3OrderSerial.cpp
     V3Os.cpp
     V3Param.cpp
-    V3Partition.cpp
     V3PreShell.cpp
     V3Premit.cpp
     V3ProtectLib.cpp
@@ -289,6 +300,7 @@ set(COMMON_SOURCES
     V3Split.cpp
     V3SplitAs.cpp
     V3SplitVar.cpp
+    V3StackCount.cpp
     V3Stats.cpp
     V3StatsReport.cpp
     V3String.cpp

@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2004-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2004-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -82,7 +82,7 @@ class CastVisitor final : public VNVisitor {
     }
     void ensureCast(AstNodeExpr* nodep) {
         if (castSize(nodep->backp()) != castSize(nodep) || !nodep->user1()) {
-            insertCast(nodep, castSize(nodep->backp()));
+            if (!nodep->isNull()) insertCast(nodep, castSize(nodep->backp()));
         }
     }
     void ensureLower32Cast(AstCCast* nodep) {
@@ -121,14 +121,14 @@ class CastVisitor final : public VNVisitor {
         // already checked by V3Width and dtypep of a condition operator is a type of their
         // common base class, so both classes can be safely casted.
         const AstClassRefDType* const thenClassDtypep
-            = VN_CAST(nodep->thenp()->dtypep(), ClassRefDType);
+            = VN_CAST(nodep->thenp()->dtypep()->skipRefp(), ClassRefDType);
         const AstClassRefDType* const elseClassDtypep
-            = VN_CAST(nodep->elsep()->dtypep(), ClassRefDType);
+            = VN_CAST(nodep->elsep()->dtypep()->skipRefp(), ClassRefDType);
         const bool castRequired = thenClassDtypep && elseClassDtypep
                                   && (thenClassDtypep->classp() != elseClassDtypep->classp());
         if (castRequired) {
             const AstClass* const commonBaseClassp
-                = VN_AS(nodep->dtypep(), ClassRefDType)->classp();
+                = VN_AS(nodep->dtypep()->skipRefp(), ClassRefDType)->classp();
             if (thenClassDtypep->classp() != commonBaseClassp) {
                 AstNodeExpr* thenp = nodep->thenp()->unlinkFrBack();
                 nodep->thenp(new AstCCast{thenp->fileline(), thenp, nodep});
@@ -201,7 +201,7 @@ class CastVisitor final : public VNVisitor {
         // Constants are of unknown size if smaller than 33 bits, because
         // we're too lazy to wrap every constant in the universe in
         // ((IData)#).
-        nodep->user1(nodep->isQuad() || nodep->isWide());
+        nodep->user1(nodep->isQuad() || nodep->isWide() || nodep->isNull());
     }
 
     // Null dereference protection
@@ -212,6 +212,11 @@ class CastVisitor final : public VNVisitor {
     void visit(AstCMethodCall* nodep) override {
         iterateChildren(nodep);
         ensureNullChecked(nodep->fromp());
+        nodep->user1(true);
+    }
+    void visit(AstCMethodHard* nodep) override {
+        iterateChildren(nodep);
+        nodep->user1(true);
     }
     void visit(AstMemberSel* nodep) override {
         iterateChildren(nodep);
@@ -236,5 +241,5 @@ public:
 void V3Cast::castAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { CastVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("cast", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("cast", 0, dumpTreeEitherLevel() >= 3);
 }

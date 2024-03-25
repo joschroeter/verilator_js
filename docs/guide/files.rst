@@ -1,4 +1,4 @@
-.. Copyright 2003-2023 by Wilson Snyder.
+.. Copyright 2003-2024 by Wilson Snyder.
 .. SPDX-License-Identifier: LGPL-3.0-only OR Artistic-2.0
 
 *****
@@ -112,6 +112,10 @@ In specific debug and other modes, it also creates:
 
    * - *{prefix}*\ .xml
      - XML tree information (from --xml)
+   * - *{prefix}*\ .tree.json
+     - JSON tree information (from --json-only)
+   * - *{prefix}*\ .tree.meta.json
+     - JSON tree metadata (from --json-only)
    * - *{prefix}*\ __cdc.txt
      - Clock Domain Crossing checks (from --cdc)
    * - *{prefix}*\ __stats.txt
@@ -145,6 +149,10 @@ After running Make, the C++ compiler may produce the following:
      - Intermediate objects
    * - *{prefix}*\
      - Final executable (from --exe)
+   * - lib\ *{prefix}*\ .a
+     - Final archive (default lib mode)
+   * - libverilated.a
+     - Runtime for verilated model (default lib mode)
    * - *{prefix}*\ __ALL.a
      - Library of all Verilated objects
    * - *{prefix}*\ __ALL.cpp

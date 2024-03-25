@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2005-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2005-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -103,7 +103,16 @@ public:
 //============================================================================
 
 class V3Stats final {
+    static V3Mutex s_mutex;  // Protects accesses
+
 public:
+    // Symbolic names for some statistics that are later read by summaryReport()
+    static constexpr const char* STAT_CPP_CHARS = "Output, C++ bytes written";
+    static constexpr const char* STAT_CPP_FILES = "Output, C++ files written";
+    static constexpr const char* STAT_MODEL_SIZE = "Size prediction, Model total (bytes)";
+    static constexpr const char* STAT_SOURCE_CHARS = "Input, Verilog bytes read";
+    static constexpr const char* STAT_SOURCE_MODULES = "Input, Verilog modules read";
+
     static void addStat(const V3Statistic&);
     static void addStat(const string& stage, const string& name, double value,
                         unsigned precision = 0) {
@@ -112,9 +121,8 @@ public:
     static void addStat(const string& name, double value, unsigned precision = 0) {
         addStat(V3Statistic{"*", name, value, precision});
     }
-    static void addStatSum(const string& name, double count) {
-        addStat(V3Statistic{"*", name, count, 0, true});
-    }
+    // Add summary statistic - Threadsafe _unlike most other functions here_
+    static void addStatSum(const string& name, double count) VL_MT_SAFE_EXCLUDES(s_mutex);
     static void addStatPerf(const string& name, double value) {
         addStat(V3Statistic{"*", name, value, 6, true, true});
     }

@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -372,7 +372,11 @@ void V3Broken::selfTest() {
     // Exercise addNewed and deleted for coverage, as otherwise only used with VL_LEAK_CHECKS
     FileLine* const fl = new FileLine{FileLine::commandLineFilename()};
     const AstNode* const newp = new AstBegin{fl, "[EditWrapper]", nullptr};
+    // Don't actually do it with VL_LEAK_CHECKS, when new/delete calls these.
+    // Otherwise you call addNewed twice on the same address, which is an error.
+#ifndef VL_LEAK_CHECKS
     addNewed(newp);
     deleted(newp);
+#endif
     VL_DO_DANGLING(delete newp, newp);
 }

@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -290,6 +290,7 @@ class ScopeVisitor final : public VNVisitor {
             m_varScopes.emplace(std::make_pair(nodep, m_scopep), varscp);
             m_scopep->addVarsp(varscp);
         }
+        iterateChildren(nodep);
     }
     void visit(AstVarRef* nodep) override {
         // VarRef needs to point to VarScope
@@ -303,7 +304,7 @@ class ScopeVisitor final : public VNVisitor {
     }
     void visit(AstScopeName* nodep) override {
         // If there's a %m in the display text, we add a special node that will contain the name()
-        const string prefix = std::string{"__DOT__"} + m_scopep->name();
+        const string prefix = "__DOT__"s + m_scopep->name();
         // TOP and above will be the user's name().
         // Note 'TOP.' is stripped by scopePrettyName
         // To keep correct visual order, must add before other Text's
@@ -416,5 +417,5 @@ void V3Scope::scopeAll(AstNetlist* nodep) {
         const ScopeVisitor visitor{nodep};
         ScopeCleanupVisitor{nodep};
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("scope", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("scope", 0, dumpTreeEitherLevel() >= 3);
 }

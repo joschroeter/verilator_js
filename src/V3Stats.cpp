@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2005-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2005-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -22,6 +22,11 @@
 #include <map>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
+
+//######################################################################
+// Statics
+
+V3Mutex V3Stats::s_mutex;
 
 //######################################################################
 // Stats class functions
@@ -156,7 +161,7 @@ public:
         // Branch predictions
         for (int t = 0; t < VBranchPred::_ENUM_END; ++t) {
             if (const uint64_t c = m_counters.m_statPred[t]) {
-                addStat(std::string{"Branch prediction, "} + VBranchPred{t}.ascii(), c);
+                addStat("Branch prediction, "s + VBranchPred{t}.ascii(), c);
             }
         }
     }
@@ -164,6 +169,11 @@ public:
 
 //######################################################################
 // Top Stats class
+
+void V3Stats::addStatSum(const string& name, double count) VL_MT_SAFE_EXCLUDES(s_mutex) {
+    V3LockGuard lock{s_mutex};
+    addStat(V3Statistic{"*", name, count, 0, true});
+}
 
 void V3Stats::statsStageAll(AstNetlist* nodep, const std::string& stage, bool fastOnly) {
     StatsVisitor{nodep, stage, fastOnly};

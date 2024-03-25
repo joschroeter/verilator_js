@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -439,11 +439,9 @@ class UnknownVisitor final : public VNVisitor {
             int declElements = -1;
             AstNodeDType* const dtypep = nodep->fromp()->dtypep()->skipRefp();
             UASSERT_OBJ(dtypep, nodep, "Select of non-selectable type");
-            if (const AstNodeArrayDType* const adtypep = VN_CAST(dtypep, NodeArrayDType)) {
-                declElements = adtypep->elementsConst();
-            } else {
-                nodep->v3error("Select from non-array " << dtypep->prettyTypeName());
-            }
+            const AstNodeArrayDType* const adtypep = VN_CAST(dtypep, NodeArrayDType);
+            UASSERT_OBJ(adtypep, nodep, "Select from non-array " << dtypep->prettyTypeName());
+            declElements = adtypep->elementsConst();
             if (debug() >= 9) nodep->dumpTree("-  arraysel_old: ");
 
             // If value MODDIV constant, where constant <= declElements, known ok
@@ -471,7 +469,10 @@ class UnknownVisitor final : public VNVisitor {
                 VL_DO_DANGLING(condp->deleteTree(), condp);
             } else if (!lvalue
                        // Making a scalar would break if we're making an array
-                       && !VN_IS(nodep->dtypep()->skipRefp(), NodeArrayDType)) {
+                       && !VN_IS(nodep->dtypep()->skipRefp(), NodeArrayDType)
+                       && !(VN_IS(nodep->dtypep()->skipRefp(), NodeUOrStructDType)
+                            && !VN_CAST(nodep->dtypep()->skipRefp(), NodeUOrStructDType)
+                                    ->packed())) {
                 // ARRAYSEL(...) -> COND(LT(bit<maxbit), ARRAYSEL(...), {width{1'bx}})
                 VNRelinker replaceHandle;
                 nodep->unlinkFrBack(&replaceHandle);
@@ -525,5 +526,5 @@ public:
 void V3Unknown::unknownAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { UnknownVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("unknown", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("unknown", 0, dumpTreeEitherLevel() >= 3);
 }

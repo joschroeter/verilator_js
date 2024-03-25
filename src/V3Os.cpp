@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -318,9 +318,7 @@ void V3Os::filesystemFlushBuildDir(const string& dirname) {
     // Attempt to force out written directory, for NFS like file systems.
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
     // Linux kernel may not reread from NFS unless timestamp modified
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    const int err = utimes(dirname.c_str(), &tv);
+    const int err = utimes(dirname.c_str(), nullptr);
     // Not an error
     if (err != 0) UINFO(1, "-Info: File not utimed: " << dirname << endl);
 #endif
@@ -374,7 +372,9 @@ string V3Os::trueRandom(size_t size) VL_MT_SAFE {
 #if defined(_WIN32) || defined(__MINGW32__)
     const NTSTATUS hr = BCryptGenRandom(nullptr, reinterpret_cast<BYTE*>(data), size,
                                         BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    if (!BCRYPT_SUCCESS(hr)) v3fatal("Could not acquire random data.");
+    if (VL_UNCOVERABLE(!BCRYPT_SUCCESS(hr))) {
+        v3fatal("Could not acquire random data. Try specifying a key instead.");  // LCOV_EXCL_LINE
+    }
 #else
     std::ifstream is{"/dev/urandom", std::ios::in | std::ios::binary};
     // This read uses the size of the buffer.
@@ -420,7 +420,7 @@ uint64_t V3Os::memUsageBytes() {
 #else
     // Highly unportable. Sorry
     const char* const statmFilename = "/proc/self/statm";
-    FILE* fp = fopen(statmFilename, "r");
+    FILE* const fp = fopen(statmFilename, "r");
     if (!fp) return 0;
     uint64_t size, resident, share, text, lib, data, dt;  // All in pages
     const int items = fscanf(

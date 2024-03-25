@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -366,7 +366,7 @@ private:
         // Call for node types we know we can't handle
         checkNodeInfo(nodep);
         if (optimizable()) {
-            clearOptimizable(nodep, std::string{"Known unhandled node type "} + nodep->typeName());
+            clearOptimizable(nodep, "Known unhandled node type "s + nodep->typeName());
         }
     }
     void badNodeType(AstNode* nodep) {
@@ -378,7 +378,11 @@ private:
             clearOptimizable(nodep,
                              "Unknown node type, perhaps missing visitor in SimulateVisitor");
 #ifdef VL_DEBUG
-            UINFO(0, "Unknown node type in SimulateVisitor: " << nodep->prettyTypeName() << endl);
+            static std::set<VNType> s_typePrinted;
+            const auto pair = s_typePrinted.emplace(nodep->type());
+            if (pair.second)
+                UINFO(0,
+                      "Unknown node type in SimulateVisitor: " << nodep->prettyTypeName() << endl);
 #endif
         }
     }
@@ -392,9 +396,6 @@ private:
         }
         UASSERT_OBJ(vscp, nodep, "Not linked");
         return vscp;
-    }
-    int unrollCount() const {
-        return m_params ? v3Global.opt.unrollCount() * 16 : v3Global.opt.unrollCount();
     }
     bool jumpingOver(const AstNode* nodep) const {
         // True to jump over this node - all visitors must call this up front
@@ -456,12 +457,12 @@ private:
                     clearOptimizable(nodep, "Var write & read");
                 }
                 m_varAux(vscp).usage |= VU_RV;
-                const bool isConst = (nodep->varp()->isConst() || nodep->varp()->isParam())
-                                     && nodep->varp()->valuep();
+                const bool varIsConst = (nodep->varp()->isConst() || nodep->varp()->isParam())
+                                        && nodep->varp()->valuep();
                 AstNodeExpr* const valuep
-                    = isConst ? fetchValueNull(nodep->varp()->valuep()) : nullptr;
+                    = varIsConst ? fetchValueNull(nodep->varp()->valuep()) : nullptr;
                 // Propagate PARAM constants for constant function analysis
-                if (isConst && valuep) {
+                if (varIsConst && valuep) {
                     if (!m_checkOnly && optimizable()) newValue(vscp, valuep);
                 } else {
                     if (m_checkOnly) varRefCb(nodep);
@@ -506,13 +507,13 @@ private:
         }
         if (nodep->dpiImport()) {
             if (m_params) {
-                nodep->v3error("Constant function may not be DPI import (IEEE 1800-2017 13.4.3)");
+                nodep->v3error("Constant function may not be DPI import (IEEE 1800-2023 13.4.3)");
             }
             clearOptimizable(nodep, "DPI import functions aren't simulatable");
         }
         if (nodep->underGenerate()) {
             nodep->v3error(
-                "Constant function may not be declared under generate (IEEE 1800-2017 13.4.3)");
+                "Constant function may not be declared under generate (IEEE 1800-2023 13.4.3)");
             clearOptimizable(nodep, "Constant function called under generate");
         }
         checkNodeInfo(nodep);
@@ -559,7 +560,8 @@ private:
             AstNode* const valuep = nodep->itemp()->valuep();
             if (valuep) {
                 iterateAndNextConstNull(valuep);
-                if (optimizable()) newValue(nodep, fetchValue(valuep));
+                if (!optimizable()) return;
+                newValue(nodep, fetchValue(valuep));
             } else {
                 clearOptimizable(nodep, "No value found for enum item");  // LCOV_EXCL_LINE
             }
@@ -611,13 +613,13 @@ private:
             iterateChildrenConst(nodep);
         } else {
             iterateConst(nodep->lhsp());
-            if (optimizable()) {
-                if (fetchConst(nodep->lhsp())->num().isNeqZero()) {
-                    iterateConst(nodep->rhsp());
-                    newValue(nodep, fetchValue(nodep->rhsp()));
-                } else {
-                    newValue(nodep, fetchValue(nodep->lhsp()));  // a zero
-                }
+            if (!optimizable()) return;
+            if (fetchConst(nodep->lhsp())->num().isNeqZero()) {
+                iterateConst(nodep->rhsp());
+                if (!optimizable()) return;
+                newValue(nodep, fetchValue(nodep->rhsp()));
+            } else {
+                newValue(nodep, fetchValue(nodep->lhsp()));  // a zero
             }
         }
     }
@@ -629,13 +631,13 @@ private:
             iterateChildrenConst(nodep);
         } else {
             iterateConst(nodep->lhsp());
-            if (optimizable()) {
-                if (fetchConst(nodep->lhsp())->num().isNeqZero()) {
-                    newValue(nodep, fetchValue(nodep->lhsp()));  // a one
-                } else {
-                    iterateConst(nodep->rhsp());
-                    newValue(nodep, fetchValue(nodep->rhsp()));
-                }
+            if (!optimizable()) return;
+            if (fetchConst(nodep->lhsp())->num().isNeqZero()) {
+                newValue(nodep, fetchValue(nodep->lhsp()));  // a one
+            } else {
+                iterateConst(nodep->rhsp());
+                if (!optimizable()) return;
+                newValue(nodep, fetchValue(nodep->rhsp()));
             }
         }
     }
@@ -647,15 +649,14 @@ private:
             iterateChildrenConst(nodep);
         } else {
             iterateConst(nodep->lhsp());
-            if (optimizable()) {
-                if (fetchConst(nodep->lhsp())->num().isEqZero()) {
-                    const AstConst cnst{nodep->fileline(), AstConst::WidthedValue{}, 1,
-                                        1};  // a one
-                    newValue(nodep, &cnst);  // a one
-                } else {
-                    iterateConst(nodep->rhsp());
-                    newValue(nodep, fetchValue(nodep->rhsp()));
-                }
+            if (!optimizable()) return;
+            if (fetchConst(nodep->lhsp())->num().isEqZero()) {
+                const AstConst cnst{nodep->fileline(), AstConst::WidthedValue{}, 1, 1};  // a one
+                newValue(nodep, &cnst);  // a one
+            } else {
+                iterateConst(nodep->rhsp());
+                if (!optimizable()) return;
+                newValue(nodep, fetchValue(nodep->rhsp()));
             }
         }
     }
@@ -816,10 +817,9 @@ private:
             iterateChildrenConst(nodep);
         } else if (optimizable()) {
             iterateAndNextConstNull(nodep->rhsp());
-            if (optimizable()) {
-                AstNode* const vscp = varOrScope(VN_CAST(nodep->lhsp(), VarRef));
-                assignOutValue(nodep, vscp, fetchValue(nodep->rhsp()));
-            }
+            if (!optimizable()) return;
+            AstNode* const vscp = varOrScope(VN_CAST(nodep->lhsp(), VarRef));
+            assignOutValue(nodep, vscp, fetchValue(nodep->rhsp()));
         }
     }
     void visit(AstArraySel* nodep) override {
@@ -961,10 +961,11 @@ private:
                 }
                 iterateAndNextConstNull(nodep->stmtsp());
                 iterateAndNextConstNull(nodep->incsp());
-                if (loops++ > unrollCount() * 16) {
+                if (loops++ > v3Global.opt.unrollCountAdjusted(VOptionBool{}, m_params, true)) {
                     clearOptimizable(nodep, "Loop unrolling took too long; probably this is an"
-                                            "infinite loop, or set --unroll-count above "
-                                                + cvtToStr(unrollCount()));
+                                            "infinite loop, or use /*verilator unroll_full*/, or "
+                                            "set --unroll-count above "
+                                                + cvtToStr(loops));
                     break;
                 }
             }
@@ -1000,11 +1001,12 @@ private:
                 if (jumpingOver(nodep)) break;
 
                 // Prep for next loop
-                if (loops++ > unrollCount() * 16) {
-                    clearOptimizable(nodep,
-                                     "Loop unrolling took too long; probably this is an infinite"
-                                     " loop, or set --unroll-count above "
-                                         + cvtToStr(unrollCount()));
+                if (loops++
+                    > v3Global.opt.unrollCountAdjusted(nodep->unrollFull(), m_params, true)) {
+                    clearOptimizable(nodep, "Loop unrolling took too long; probably this is an"
+                                            "infinite loop, or use /*verilator unroll_full*/, or "
+                                            "set --unroll-count above "
+                                                + cvtToStr(loops));
                     break;
                 }
             }
@@ -1132,7 +1134,7 @@ private:
                                 nodep, "Argument for $display like statement is not constant");
                             break;
                         }
-                        const string pformat = std::string{"%"} + width + pos[0];
+                        const string pformat = "%"s + width + pos[0];
                         result += constp->num().displayed(nodep, pformat);
                     } else {
                         switch (std::tolower(pos[0])) {
@@ -1177,6 +1179,9 @@ private:
             }
         }
     }
+
+    // Ignore coverage - from a function we're inlining
+    void visit(AstCoverInc* nodep) override {}
 
     // ====
     // Known Bad
@@ -1252,7 +1257,7 @@ public:
     }
     ~SimulateVisitor() override {
         for (const auto& pair : m_constps) {
-            for (AstConst* const constp : pair.second) { delete constp; }
+            for (AstConst* const constp : pair.second) delete constp;
         }
         m_constps.clear();
         for (AstNode* ip : m_reclaimValuesp) delete ip;

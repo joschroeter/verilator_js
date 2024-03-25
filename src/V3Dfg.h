@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -109,12 +109,12 @@ class DfgGraph final {
         // cppcheck-suppress noExplicitConstructor
         UserDataInUse(UserDataInUse&& that) {
             UASSERT(that.m_graphp, "Moving from empty");
-            m_graphp = vlstd::exchange(that.m_graphp, nullptr);
+            m_graphp = std::exchange(that.m_graphp, nullptr);
         }
         VL_UNCOPYABLE(UserDataInUse);
         UserDataInUse& operator=(UserDataInUse&& that) {
             UASSERT(that.m_graphp, "Moving from empty");
-            m_graphp = vlstd::exchange(that.m_graphp, nullptr);
+            m_graphp = std::exchange(that.m_graphp, nullptr);
             return *this;
         }
 
@@ -330,10 +330,11 @@ public:
         UDEBUGONLY(UASSERT_OBJ(isSupportedDType(nodep->dtypep()), nodep, "Unsupported dtype"););
         // For simplicity, all packed types are represented with a fixed type
         if (AstUnpackArrayDType* const typep = VN_CAST(nodep->dtypep(), UnpackArrayDType)) {
-            // TODO: these need interning via AstTypeTable otherwise they leak
-            return new AstUnpackArrayDType{typep->fileline(),
-                                           dtypeForWidth(typep->subDTypep()->width()),
-                                           typep->rangep()->cloneTree(false)};
+            AstNodeDType* const dtypep = new AstUnpackArrayDType{
+                typep->fileline(), dtypeForWidth(typep->subDTypep()->width()),
+                typep->rangep()->cloneTree(false)};
+            v3Global.rootp()->typeTablep()->addTypesp(dtypep);
+            return dtypep;
         }
         return dtypeForWidth(nodep->width());
     }
@@ -503,9 +504,6 @@ public:
 
     // Is this a DfgConst that is all ones
     inline bool isOnes() const VL_MT_DISABLED;
-
-    // Should this vertex be inlined when rendering to Ast, or be stored to a temporary
-    inline bool inlined() const VL_MT_DISABLED;
 
     // Methods that allow DfgVertex to participate in error reporting/messaging
     void v3errorEnd(std::ostringstream& str) const VL_RELEASE(V3Error::s().m_mutex) {
@@ -927,15 +925,6 @@ bool DfgVertex::isZero() const {
 
 bool DfgVertex::isOnes() const {
     if (const DfgConst* const constp = cast<DfgConst>()) return constp->isOnes();
-    return false;
-}
-
-bool DfgVertex::inlined() const {
-    // Inline vertices that drive only a single node, or are special
-    if (!hasMultipleSinks()) return true;
-    if (is<DfgConst>()) return true;
-    if (is<DfgVertexVar>()) return true;
-    if (const DfgArraySel* const selp = cast<DfgArraySel>()) return selp->bitp()->is<DfgConst>();
     return false;
 }
 

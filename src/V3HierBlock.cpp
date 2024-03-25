@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -253,7 +253,7 @@ class HierBlockUsageCollectVisitor final : public VNVisitorConst {
         // Don't visit twice
         if (nodep->user1SetOnce()) return;
         UINFO(5, "Checking " << nodep->prettyNameQ() << " from "
-                             << (m_hierBlockp ? m_hierBlockp->prettyNameQ() : std::string{"null"})
+                             << (m_hierBlockp ? m_hierBlockp->prettyNameQ() : "null"s)
                              << std::endl);
         VL_RESTORER(m_modp);
         AstModule* const prevHierBlockp = m_hierBlockp;

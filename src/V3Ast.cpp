@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -22,6 +22,7 @@
 
 #include <iomanip>
 #include <memory>
+#include <sstream>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
 
@@ -1116,6 +1117,7 @@ bool AstNode::sameTreeIter(const AstNode* node1p, const AstNode* node2p, bool ig
 void AstNode::checkTreeIter(const AstNode* prevBackp) const VL_MT_STABLE {
     // private: Check a tree and children
     UASSERT_OBJ(prevBackp == this->backp(), this, "Back node inconsistent");
+    // cppcheck-suppress danglingTempReference
     const VNTypeInfo& typeInfo = *type().typeInfo();
     for (int i = 1; i <= 4; i++) {
         AstNode* nodep = nullptr;
@@ -1126,6 +1128,7 @@ void AstNode::checkTreeIter(const AstNode* prevBackp) const VL_MT_STABLE {
         case 4: nodep = op4p(); break;
         default: this->v3fatalSrc("Bad case"); break;
         }
+        // cppcheck-suppress danglingTempReference
         const char* opName = typeInfo.m_opNamep[i - 1];
         switch (typeInfo.m_opType[i - 1]) {
         case VNTypeInfo::OP_UNUSED:
@@ -1142,7 +1145,7 @@ void AstNode::checkTreeIter(const AstNode* prevBackp) const VL_MT_STABLE {
         case VNTypeInfo::OP_LIST:
             if (const AstNode* const headp = nodep) {
                 const AstNode* backp = this;
-                const AstNode* tailp = headp;
+                const AstNode* tailp;
                 const AstNode* opp = headp;
                 do {
                     opp->checkTreeIter(backp);
@@ -1166,6 +1169,31 @@ void AstNode::checkTreeIter(const AstNode* prevBackp) const VL_MT_STABLE {
             }
             break;
         default: this->v3fatalSrc("Bad case"); break;
+        }
+    }
+    if (v3Global.opt.debugWidth() && v3Global.widthMinUsage() == VWidthMinUsage::VERILOG_WIDTH) {
+        if (const AstNodeExpr* const exprp = VN_CAST(this, NodeExpr)) {
+            const char* const whyp = exprp->widthMismatch();
+            if (whyp) {
+                auto dtypeStr = [](const AstNodeExpr* exprp) VL_MT_STABLE {
+                    std::ostringstream ss;
+                    exprp->dtypep()->dumpSmall(ss);
+                    return ss.str();
+                };
+                if (const AstNodeUniop* const uniopp = VN_CAST(exprp, NodeUniop)) {
+                    UASSERT_OBJ(!whyp, uniopp,
+                                "widthMismatch detected " << whyp << "OUT:" << dtypeStr(uniopp)
+                                                          << " LHS:" << dtypeStr(uniopp->lhsp()));
+                } else if (const AstNodeBiop* const biopp = VN_CAST(exprp, NodeBiop)) {
+                    UASSERT_OBJ(!whyp, biopp,
+                                "widthMismatch detected " << whyp << "OUT:" << dtypeStr(biopp)
+                                                          << " LHS:" << dtypeStr(biopp->lhsp())
+                                                          << " RHS:" << dtypeStr(biopp->rhsp()));
+                } else {
+                    UASSERT_OBJ(false, exprp,
+                                "widthMismatch detected " << whyp << " in an unexpected type");
+                }
+            }
         }
     }
 }
@@ -1326,6 +1354,28 @@ void AstNode::dumpTreeDot(std::ostream& os) const {
     drawChildren(os, this, m_op2p, "op2");
     drawChildren(os, this, m_op3p, "op3");
     drawChildren(os, this, m_op4p, "op4");
+}
+
+void AstNode::dumpTreeJsonFile(const string& filename, bool doDump) {
+    if (!doDump) return;
+    UINFO(2, "Dumping " << filename << endl);
+    const std::unique_ptr<std::ofstream> treejsonp{V3File::new_ofstream(filename)};
+    if (treejsonp->fail()) v3fatal("Can't write " << filename);
+    dumpTreeJson(*treejsonp);
+    *treejsonp << '\n';
+}
+
+void AstNode::dumpJsonMetaFile(const string& filename) {
+    UINFO(2, "Dumping " << filename << endl);
+    const std::unique_ptr<std::ofstream> treejsonp{V3File::new_ofstream(filename)};
+    if (treejsonp->fail()) v3fatal("Can't write " << filename);
+    *treejsonp << '{';
+    FileLine::fileNameNumMapDumpJson(*treejsonp);
+    *treejsonp << ',';
+    v3Global.idPtrMapDumpJson(*treejsonp);
+    *treejsonp << ',';
+    v3Global.ptrNamesDumpJson(*treejsonp);
+    *treejsonp << "}\n";
 }
 
 void AstNode::dumpTreeDotFile(const string& filename, bool doDump) {
@@ -1505,8 +1555,7 @@ static VCastable computeCastableImp(const AstNodeDType* toDtp, const AstNodeDTyp
             return VCastable::ENUM_IMPLICIT;
         if (fromNumericable) return VCastable::ENUM_EXPLICIT;
     } else if (VN_IS(toDtp, ClassRefDType) && VN_IS(fromConstp, Const)) {
-        if (VN_IS(fromConstp, Const) && VN_AS(fromConstp, Const)->num().isNull())
-            return VCastable::COMPATIBLE;
+        if (fromConstp->isNull()) return VCastable::COMPATIBLE;
     } else if (VN_IS(toDtp, ClassRefDType) && VN_IS(fromDtp, ClassRefDType)) {
         const auto toClassp = VN_AS(toDtp, ClassRefDType)->classp();
         const auto fromClassp = VN_AS(fromDtp, ClassRefDType)->classp();
@@ -1532,26 +1581,26 @@ VCastable AstNode::computeCastable(const AstNodeDType* toDtp, const AstNodeDType
     return castable;
 }
 
-AstNodeDType* AstNode::getCommonClassTypep(AstNode* nodep1, AstNode* nodep2) {
-    // Return the class type that both nodep1 and nodep2 are castable to.
+AstNodeDType* AstNode::getCommonClassTypep(AstNode* node1p, AstNode* node2p) {
+    // Return the class type that both node1p and node2p are castable to.
     // If both are null, return the type of null constant.
     // If one is a class and one is null, return AstClassRefDType that points to that class.
     // If no common class type exists, return nullptr.
 
     // First handle cases with null values and when one class is a super class of the other.
-    if (VN_IS(nodep1, Const)) std::swap(nodep1, nodep2);
+    if (VN_IS(node1p, Const)) std::swap(node1p, node2p);
     {
-        const VCastable castable = computeCastable(nodep1->dtypep(), nodep2->dtypep(), nodep2);
+        const VCastable castable = computeCastable(node1p->dtypep(), node2p->dtypep(), node2p);
         if (castable == VCastable::SAMEISH || castable == VCastable::COMPATIBLE) {
-            return nodep1->dtypep();
+            return node1p->dtypep();
         } else if (castable == VCastable::DYNAMIC_CLASS) {
-            return nodep2->dtypep();
+            return node2p->dtypep();
         }
     }
 
-    AstClassRefDType* classDtypep1 = VN_CAST(nodep1->dtypep(), ClassRefDType);
+    AstClassRefDType* classDtypep1 = VN_CAST(node1p->dtypep(), ClassRefDType);
     while (classDtypep1) {
-        const VCastable castable = computeCastable(classDtypep1, nodep2->dtypep(), nodep2);
+        const VCastable castable = computeCastable(classDtypep1, node2p->dtypep(), node2p);
         if (castable == VCastable::COMPATIBLE) return classDtypep1;
         AstClassExtends* const extendsp = classDtypep1->classp()->extendsp();
         classDtypep1 = extendsp ? VN_AS(extendsp->dtypep(), ClassRefDType) : nullptr;

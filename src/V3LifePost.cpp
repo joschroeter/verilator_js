@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -28,8 +28,8 @@
 
 #include "V3LifePost.h"
 
+#include "V3ExecGraph.h"
 #include "V3GraphPathChecker.h"
-#include "V3PartitionGraph.h"
 #include "V3Stats.h"
 
 #include <memory>  // for std::unique_ptr -> auto_ptr or unique_ptr
@@ -95,7 +95,7 @@ public:
 // Location within the execution graph, identified by an mtask
 // and a sequence number within the mtask:
 
-struct LifeLocation {
+struct LifeLocation final {
     const ExecMTask* mtaskp = nullptr;
     uint32_t sequence = 0;
 
@@ -113,7 +113,7 @@ public:
     }
 };
 
-struct LifePostLocation {
+struct LifePostLocation final {
     LifeLocation loc;
     AstAssignPost* nodep = nullptr;
     LifePostLocation() = default;
@@ -129,6 +129,7 @@ class LifePostDlyVisitor final : public VNVisitor {
     // NODE STATE
     // AstVarScope::user1()    -> bool: referenced outside _eval__nba
     // AstVarScope::user4()    -> AstVarScope*: Passed to LifePostElim to substitute this var
+    const VNUser1InUse m_inuser1;
     const VNUser4InUse m_inuser4;
 
     // STATE
@@ -362,5 +363,5 @@ void V3LifePost::lifepostAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     // Mark redundant AssignPost
     { LifePostDlyVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("life_post", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("life_post", 0, dumpTreeEitherLevel() >= 3);
 }

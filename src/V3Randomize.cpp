@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -173,7 +173,8 @@ class RandomizeVisitor final : public VNVisitor {
 
     AstCDType* findVlRandCDType(FileLine* fl, uint64_t items) {
         // For 8 items we need to have a 9 item LFSR so items is max count
-        const std::string type = AstCDType::typeToHold(items);
+        // width(items) = log2(items) + 1
+        const std::string type = AstCDType::typeToHold(V3Number::log2bQuad(items) + 1);
         const std::string name = "VlRandC<" + type + ", " + cvtToStr(items) + "ULL>";
         // Create or reuse (to avoid duplicates) randomization object dtype
         const auto pair = m_randcDtypes.emplace(name, nullptr);
@@ -401,7 +402,7 @@ class RandomizeVisitor final : public VNVisitor {
             ifsp = newifp;
         }
         AstDisplay* dispp = new AstDisplay{
-            fl, VDisplayType::DT_ERROR, "All randcase items had 0 weights (IEEE 1800-2017 18.16)",
+            fl, VDisplayType::DT_ERROR, "All randcase items had 0 weights (IEEE 1800-2023 18.16)",
             nullptr, nullptr};
         UASSERT_OBJ(m_modp, nodep, "randcase not under module");
         dispp->fmtp()->timeunit(m_modp->timeunit());
@@ -435,7 +436,7 @@ void V3Randomize::randomizeNetlist(AstNetlist* nodep) {
         const RandomizeMarkVisitor markVisitor{nodep};
         RandomizeVisitor{nodep};
     }
-    V3Global::dumpCheckGlobalTree("randomize", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("randomize", 0, dumpTreeEitherLevel() >= 3);
 }
 
 AstFunc* V3Randomize::newRandomizeFunc(AstClass* nodep) {

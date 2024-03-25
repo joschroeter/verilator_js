@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -132,7 +132,7 @@ bool areDisjoint(const std::set<const AstVar*>& a, const std::set<const AstVar*>
 //######################################################################
 // Structure containing information required for code motion/merging
 
-struct StmtProperties {
+struct StmtProperties final {
     AstNodeExpr* m_condp = nullptr;  // The condition expression, if a conditional node
     std::set<const AstVar*> m_rdVars;  // Variables read by this statement
     std::set<const AstVar*> m_wrVars;  // Variables written by this statement
@@ -439,6 +439,7 @@ class MergeCondVisitor final : public VNVisitor {
     // STATE
     VDouble0 m_statMerges;  // Statistic tracking
     VDouble0 m_statMergedItems;  // Statistic tracking
+    VDouble0 m_statCandidateItems;  // Statistic tracking
     VDouble0 m_statLongestList;  // Statistic tracking
 
     AstNode* m_mgFirstp = nullptr;  // First node in merged sequence
@@ -784,6 +785,8 @@ class MergeCondVisitor final : public VNVisitor {
         m_mgNextp = nodep->nextp();
         // If last under parent, done with current list
         if (!m_mgNextp) mergeEnd();
+        // Statistics
+        ++m_statCandidateItems;
         // We did add to the list
         return true;
     }
@@ -871,6 +874,7 @@ public:
     explicit MergeCondVisitor(AstNetlist* nodep) { iterate(nodep); }
     ~MergeCondVisitor() override {
         V3Stats::addStat("Optimizations, MergeCond merges", m_statMerges);
+        V3Stats::addStat("Optimizations, MergeCond candidate items", m_statCandidateItems);
         V3Stats::addStat("Optimizations, MergeCond merged items", m_statMergedItems);
         V3Stats::addStat("Optimizations, MergeCond longest merge", m_statLongestList);
     }
@@ -884,5 +888,5 @@ public:
 void V3MergeCond::mergeAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { MergeCondVisitor{nodep}; }
-    V3Global::dumpCheckGlobalTree("merge_cond", 0, dumpTreeLevel() >= 6);
+    V3Global::dumpCheckGlobalTree("merge_cond", 0, dumpTreeEitherLevel() >= 6);
 }

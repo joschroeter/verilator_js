@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -26,6 +26,7 @@
 #include "V3ThreadSafety.h"
 
 #include <algorithm>
+#include <functional>
 
 class FileLine;
 class V3Graph;
@@ -182,6 +183,38 @@ public:
     void dumpEdges(std::ostream& os, const V3GraphVertex* vertexp) const VL_MT_DISABLED;
     static void selfTest() VL_MT_DISABLED;
 
+    class ParallelismReport final {
+        friend class GraphAlgParallelismReport;
+        // Total cost of evaluating the whole graph. The ratio of m_totalGraphCost to
+        // m_criticalPathCost gives us an estimate of the parallelizability of this graph which is
+        // only as good as the guess returned by vertexCost.
+        uint64_t m_totalGraphCost = 0;
+
+        // Cost of the critical path, in abstract units (the same units returned by the vertexCost)
+        uint64_t m_criticalPathCost = 0;
+
+        uint64_t m_vertexCount = 0;  // Number of vertexes in the graph
+        uint64_t m_edgeCount = 0;  // Number of edges in the grap
+
+        ParallelismReport() = default;
+
+    public:
+        ~ParallelismReport() = default;
+        ParallelismReport(const ParallelismReport&) = default;
+        ParallelismReport& operator=(const ParallelismReport&) = default;
+
+        uint64_t totalGraphCost() const { return m_totalGraphCost; }
+        uint64_t criticalPathCost() const { return m_criticalPathCost; }
+        uint64_t vertexCount() const { return m_vertexCount; }
+        uint64_t edgeCount() const { return m_edgeCount; }
+        double parallelismFactor() const {
+            return (static_cast<double>(m_totalGraphCost) / m_criticalPathCost);
+        }
+    };
+
+    ParallelismReport parallelismReport(
+        std::function<uint64_t(const V3GraphVertex*)> vertexCost) const VL_MT_DISABLED;
+
     // CALLBACKS
     virtual void loopsMessageCb(V3GraphVertex* vertexp) VL_MT_DISABLED;
     virtual void loopsVertexCb(V3GraphVertex* vertexp) VL_MT_DISABLED;
@@ -284,9 +317,9 @@ public:
     void rank(uint32_t rank) { m_rank = rank; }
     double fanout() const { return m_fanout; }
     void user(uint32_t user) { m_user = user; }
-    uint32_t user() const { return m_user; }
+    uint32_t user() const VL_MT_STABLE { return m_user; }
     void userp(void* userp) { m_userp = userp; }
-    void* userp() const { return m_userp; }
+    void* userp() const VL_MT_STABLE { return m_userp; }
     // ITERATORS
     V3GraphVertex* verticesNextp() const { return m_vertices.nextp(); }
     V3GraphEdge* inBeginp() const { return m_ins.begin(); }

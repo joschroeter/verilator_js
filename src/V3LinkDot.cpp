@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -919,6 +919,7 @@ class LinkDotFindVisitor final : public VNVisitor {
             UINFO(5, "Module not under any CELL or top - dead module: " << nodep << endl);
         }
     }
+
     void visit(AstClass* nodep) override {
         UASSERT_OBJ(m_curSymp, nodep, "Class not under module/package/$unit");
         UINFO(8, "   " << nodep << endl);
@@ -1068,7 +1069,7 @@ class LinkDotFindVisitor final : public VNVisitor {
                 && VN_AS(m_curSymp->nodep(), Class)->isInterfaceClass() && !nodep->pureVirtual()
                 && !nodep->isConstructor()) {
                 nodep->v3error("Interface class functions must be pure virtual"
-                               << " (IEEE 1800-2017 8.26): " << nodep->prettyNameQ());
+                               << " (IEEE 1800-2023 8.26): " << nodep->prettyNameQ());
             }
             // Change to appropriate package if extern declaration (vs definition)
             if (nodep->classOrPackagep()) {
@@ -1201,7 +1202,7 @@ class LinkDotFindVisitor final : public VNVisitor {
         if (VN_IS(m_curSymp->nodep(), Class)
             && VN_AS(m_curSymp->nodep(), Class)->isInterfaceClass() && !nodep->isParam()) {
             nodep->v3error("Interface class cannot contain non-parameter members"
-                           << " (IEEE 1800-2017 8.26): " << nodep->prettyNameQ());
+                           << " (IEEE 1800-2023 8.26): " << nodep->prettyNameQ());
         }
         if (!m_statep->forScopeCreation()) {
             // Find under either a task or the module's vars
@@ -1244,7 +1245,7 @@ class LinkDotFindVisitor final : public VNVisitor {
                                        << (ansiWarn ? nodep->warnMore()
                                                           + "... note: ANSI ports must have"
                                                             " type declared with the I/O"
-                                                            " (IEEE 1800-2017 23.2.2.2)\n"
+                                                            " (IEEE 1800-2023 23.2.2.2)\n"
                                                     : "")
                                        << nodep->warnContextPrimary() << '\n'
                                        << findvarp->warnOther()
@@ -1592,11 +1593,11 @@ class LinkDotParamVisitor final : public VNVisitor {
             // region.  V3Dead should cleanup.
             // Downstream visitors up until V3Dead need to check for nodep->dead.
             nodep->dead(true);
-        } else {
-            m_modp = nodep;
-            iterateChildren(nodep);
-            m_modp = nullptr;
+            return;
         }
+        VL_RESTORER(m_modp);
+        m_modp = nodep;
+        iterateChildren(nodep);
     }
     void visit(AstPin* nodep) override {
         // Pin: Link to submodule's port
@@ -1609,7 +1610,7 @@ class LinkDotParamVisitor final : public VNVisitor {
     }
     void visit(AstDefParam* nodep) override {
         iterateChildren(nodep);
-        nodep->v3warn(DEFPARAM, "defparam is deprecated (IEEE 1800-2017 C.4.1)\n"
+        nodep->v3warn(DEFPARAM, "defparam is deprecated (IEEE 1800-2023 C.4.1)\n"
                                     << nodep->warnMore()
                                     << "... Suggest use instantiation with #(."
                                     << nodep->prettyName() << "(...etc...))");
@@ -1725,7 +1726,7 @@ class LinkDotParamVisitor final : public VNVisitor {
             // might have been in a header file referring to a module we never
             // needed so there are false positives
             nodep->v3error(
-                "Forward typedef unused or does not resolve to a data type (IEEE 1800-2017 6.18): "
+                "Forward typedef unused or does not resolve to a data type (IEEE 1800-2023 6.18): "
                 << nodep->prettyNameQ());
         }
         // We only needed the forward declaration in order to parse correctly.
@@ -1766,11 +1767,11 @@ class LinkDotScopeVisitor final : public VNVisitor {
                     "Scopes should only exist right after V3Scope");
         // Using the CELL names, we created all hierarchy.  We now need to match this Scope
         // up with the hierarchy created by the CELL names.
+        VL_RESTORER(m_modSymp);
+        VL_RESTORER(m_scopep);
         m_modSymp = m_statep->getScopeSym(nodep);
         m_scopep = nodep;
         iterateChildren(nodep);
-        m_modSymp = nullptr;
-        m_scopep = nullptr;
     }
     void visit(AstVarScope* nodep) override {
         if (!nodep->varp()->isFuncLocal() && !nodep->varp()->isClassMember()) {
@@ -2029,7 +2030,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
     AstNodeFTask* m_ftaskp = nullptr;  // Current function/task
     int m_modportNum = 0;  // Uniqueify modport numbers
     bool m_inSens = false;  // True if in senitem
-    std::set<std::string> m_ifClassImpNames;  // Names imported from interface class
+    std::map<std::string, AstNode*> m_ifClassImpNames;  // Names imported from interface class
     std::set<AstClass*> m_extendsParam;  // Classes that have a parameterized super class
                                          // (except the default instances)
                                          // They are added to the set only in linkDotPrimary.
@@ -2037,7 +2038,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
     bool m_explicitSuperNew = false;  // Hit a "super.new" call inside a "new" function
     std::map<AstNode*, AstPin*> m_usedPins;  // Pin used in this cell, map to duplicate
 
-    struct DotStates {
+    struct DotStates final {
         DotPosition m_dotPos;  // Scope part of dotted resolution
         VSymEnt* m_dotSymp;  // SymEnt for dotted AstParse lookup
         const AstDot* m_dotp;  // Current dot
@@ -2132,7 +2133,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
                          new AstNew{fl, nullptr}};
         AstNodeStmt* const superNewStmtp = superNewp->makeStmt();
         for (AstNode* stmtp = nodep->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
-            // super.new shall be the first statement (IEEE 1800-2017 8.15)
+            // super.new shall be the first statement (IEEE 1800-2023 8.15)
             // but some nodes (such as variable declarations and typedefs) should stay before
             if (VN_IS(stmtp, NodeStmt)) {
                 stmtp->addHereThisAsNext(superNewStmtp);
@@ -2181,7 +2182,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
                 clockingp->fileline(), VVarType::MODULETEMP, clockingp->name(), VFlagChildDType{},
                 new AstBasicDType{clockingp->fileline(), VBasicDTypeKwd::EVENT}};
             clockingp->eventp(eventp);
-            // Trigger the clocking event in Observed (IEEE 1800-2017 14.13)
+            // Trigger the clocking event in Observed (IEEE 1800-2023 14.13)
             clockingp->addNextHere(new AstAlwaysObserved{
                 clockingp->fileline(),
                 new AstSenTree{clockingp->fileline(), clockingp->sensesp()->cloneTree(false)},
@@ -2207,48 +2208,53 @@ class LinkDotResolveVisitor final : public VNVisitor {
     }
     VSymEnt* getThisClassSymp() {
         VSymEnt* classSymp = m_ds.m_dotSymp;
-        do {
+        while (classSymp && !VN_IS(classSymp->nodep(), Class)) {
             classSymp = classSymp->parentp();
-        } while (classSymp && !VN_IS(classSymp->nodep(), Class));
+        }
         return classSymp;
     }
     void importImplementsClass(AstClass* implementsClassp, VSymEnt* interfaceSymp,
-                               AstClass* interfaceClassp) {
-        UINFO(8, "importImplementsClass to " << implementsClassp << " from " << interfaceClassp
-                                             << endl);
+                               AstClass* baseClassp) {
+        // Also used for standard 'extends' from a base class
+        UINFO(8,
+              "importImplementsClass to " << implementsClassp << " from " << baseClassp << endl);
         for (VSymEnt::const_iterator it = interfaceSymp->begin(); it != interfaceSymp->end();
              ++it) {
             if (AstNode* interfaceSubp = it->second->nodep()) {
                 UINFO(8, "  SymFunc " << interfaceSubp << endl);
                 if (VN_IS(interfaceSubp, NodeFTask)) {
                     const VSymEnt* const foundp = m_curSymp->findIdFlat(interfaceSubp->name());
+                    const AstNodeFTask* const interfaceFuncp = VN_CAST(interfaceSubp, NodeFTask);
+                    if (!interfaceFuncp || !interfaceFuncp->pureVirtual()) continue;
                     bool existsInChild = foundp && !foundp->imported();
+                    const string impOrExtends
+                        = baseClassp->isInterfaceClass() ? " implements " : " extends ";
                     if (!existsInChild && !implementsClassp->isInterfaceClass()) {
                         implementsClassp->v3error(
-                            "Class " << implementsClassp->prettyNameQ() << " implements "
-                                     << interfaceClassp->prettyNameQ()
+                            "Class " << implementsClassp->prettyNameQ() << impOrExtends
+                                     << baseClassp->prettyNameQ()
                                      << " but is missing implementation for "
-                                     << interfaceSubp->prettyNameQ() << " (IEEE 1800-2017 8.26)\n"
+                                     << interfaceSubp->prettyNameQ() << " (IEEE 1800-2023 8.26)\n"
                                      << implementsClassp->warnContextPrimary() << '\n'
                                      << interfaceSubp->warnOther()
                                      << "... Location of interface class's function\n"
                                      << interfaceSubp->warnContextSecondary());
                     }
-                    if (!existsInChild
-                        && m_ifClassImpNames.find(interfaceSubp->name())
-                               != m_ifClassImpNames.end()) {
+                    const auto it = m_ifClassImpNames.find(interfaceSubp->name());
+                    if (!existsInChild && it != m_ifClassImpNames.end()
+                        && it->second != interfaceSubp) {  // Not exact same function from diamond
                         implementsClassp->v3error(
-                            "Class " << implementsClassp->prettyNameQ() << " implements "
-                                     << interfaceClassp->prettyNameQ()
+                            "Class " << implementsClassp->prettyNameQ() << impOrExtends
+                                     << baseClassp->prettyNameQ()
                                      << " but missing inheritance conflict resolution for "
                                      << interfaceSubp->prettyNameQ()
-                                     << " (IEEE 1800-2017 8.26.6.2)\n"
+                                     << " (IEEE 1800-2023 8.26.6.2)\n"
                                      << implementsClassp->warnContextPrimary() << '\n'
                                      << interfaceSubp->warnOther()
                                      << "... Location of interface class's function\n"
                                      << interfaceSubp->warnContextSecondary());
                     }
-                    m_ifClassImpNames.emplace(interfaceSubp->name());
+                    m_ifClassImpNames.emplace(interfaceSubp->name(), interfaceSubp);
                 }
             }
         }
@@ -2256,7 +2262,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
     void importSymbolsFromExtended(AstClass* const nodep, AstClassExtends* const cextp) {
         AstClass* const baseClassp = cextp->classp();
         VSymEnt* const srcp = m_statep->getNodeSym(baseClassp);
-        if (baseClassp->isInterfaceClass()) importImplementsClass(nodep, srcp, baseClassp);
+        importImplementsClass(nodep, srcp, baseClassp);
         if (!cextp->isImplements()) m_curSymp->importFromClass(m_statep->symsp(), srcp);
     }
     void classExtendImport(AstClass* nodep) {
@@ -2442,7 +2448,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
             if (VN_IS(nodep->lhsp(), ParseRef) && nodep->lhsp()->name() == "this") {
                 VSymEnt* classSymp = getThisClassSymp();
                 if (!classSymp) {
-                    nodep->v3error("'this' used outside class (IEEE 1800-2017 8.11)");
+                    nodep->v3error("'this' used outside class (IEEE 1800-2023 8.11)");
                     m_ds.m_dotErr = true;
                 } else {
                     m_ds.m_dotSymp = classSymp;
@@ -2451,13 +2457,13 @@ class LinkDotResolveVisitor final : public VNVisitor {
             } else if (VN_IS(nodep->lhsp(), ParseRef) && nodep->lhsp()->name() == "super") {
                 const VSymEnt* classSymp = getThisClassSymp();
                 if (!classSymp) {
-                    nodep->v3error("'super' used outside class (IEEE 1800-2017 8.15)");
+                    nodep->v3error("'super' used outside class (IEEE 1800-2023 8.15)");
                     m_ds.m_dotErr = true;
                 } else {
                     const auto classp = VN_AS(classSymp->nodep(), Class);
                     const auto cextp = classp->extendsp();
                     if (!cextp) {
-                        nodep->v3error("'super' used on non-extended class (IEEE 1800-2017 8.15)");
+                        nodep->v3error("'super' used on non-extended class (IEEE 1800-2023 8.15)");
                         m_ds.m_dotErr = true;
                     } else {
                         if (m_statep->forPrimary()
@@ -2559,7 +2565,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
             if (m_statep->forPrimary()) return;  // The class might be parameterized somewhere
             const VSymEnt* classSymp = getThisClassSymp();
             if (!classSymp) {
-                nodep->v3error("'this' used outside class (IEEE 1800-2017 8.11)");
+                nodep->v3error("'this' used outside class (IEEE 1800-2023 8.11)");
                 return;
             }
             AstClass* const classp = VN_AS(classSymp->nodep(), Class);
@@ -2942,7 +2948,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
             && VN_IS(nodep->classOrPackageNodep(), Class)
             // References to class:: within class itself are OK per IEEE (UVM does this)
             && modClassp != refClassp) {
-            nodep->v3error("Reference to parameterized class without #() (IEEE 1800-2017 8.25.1)\n"
+            nodep->v3error("Reference to parameterized class without #() (IEEE 1800-2023 8.25.1)\n"
                            << nodep->warnMore() << "... Suggest use '"
                            << nodep->classOrPackageNodep()->prettyName() << "#()'");
         }
@@ -3400,6 +3406,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
             }
         }
         VL_RESTORER(m_curSymp);
+        VL_RESTORER(m_ftaskp);
         {
             m_ftaskp = nodep;
             m_ds.m_dotSymp = m_curSymp = m_statep->getNodeSym(nodep);
@@ -3415,7 +3422,6 @@ class LinkDotResolveVisitor final : public VNVisitor {
             }
         }
         m_ds.m_dotSymp = VL_RESTORER_PREV(m_curSymp);
-        m_ftaskp = nullptr;
     }
     void visit(AstNodeForeach* nodep) override {
         UINFO(5, "   " << nodep << endl);
@@ -3509,6 +3515,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
                 if (AstClassRefDType* classRefp = VN_CAST(refp->skipRefp(), ClassRefDType)) {
                     // Resolved to a class reference.
                     refp->replaceWith(classRefp->cloneTree(false));
+                    VL_DO_DANGLING(pushDeletep(refp), refp);
                 } else {
                     // Unable to resolve the ref type to a class reference.
                     // Get the value of type parameter passed to the class instance,
@@ -3543,7 +3550,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
                 // Will need later resolution when deal with parameters
                 if (++next == 2 && !nodep->isInterfaceClass() && !cextp->isImplements()) {
                     cextp->v3error("Multiple inheritance illegal on non-interface classes"
-                                   " (IEEE 1800-2017 8.13)");
+                                   " (IEEE 1800-2023 8.13)");
                 }
                 iterate(cextp);
                 if (m_statep->forPrimary()) {
@@ -3754,6 +3761,20 @@ class LinkDotResolveVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
 
+    void visit(AstIfaceRefDType* nodep) override {
+        if (nodep->paramsp()) {
+            // If there is no parameters, there is no need to visit this node.
+            AstIface* const ifacep = nodep->ifacep();
+            UASSERT_OBJ(ifacep, nodep, "Port parameters of AstIfaceRefDType without ifacep()");
+            if (ifacep->dead()) return;
+            checkNoDot(nodep);
+            m_usedPins.clear();
+            VL_RESTORER(m_pinSymp);
+            m_pinSymp = m_statep->getNodeSym(ifacep);
+            iterateAndNextNull(nodep->paramsp());
+        }
+    }
+
     void visit(AstAttrOf* nodep) override { iterateChildren(nodep); }
 
     void visit(AstNode* nodep) override {
@@ -3776,18 +3797,24 @@ public:
 
 void V3LinkDot::linkDotGuts(AstNetlist* rootp, VLinkDotStep step) {
     VIsCached::clearCacheTree();  // Avoid using any stale isPure
-    if (debug() >= 5 || dumpTreeLevel() >= 9) {
+    if (dumpTreeEitherLevel() >= 9) {
+        V3Global::dumpCheckGlobalTree("prelinkdot");
+    } else if (debug() >= 5) {  // on high dbg level, dump even if not explicitly told to
         v3Global.rootp()->dumpTreeFile(v3Global.debugFilename("prelinkdot.tree"));
     }
     LinkDotState state{rootp, step};
     const LinkDotFindVisitor visitor{rootp, &state};
-    if (debug() >= 5 || dumpTreeLevel() >= 9) {
+    if (dumpTreeEitherLevel() >= 9) {
+        V3Global::dumpCheckGlobalTree("prelinkdot-find");
+    } else if (debug() >= 5) {
         v3Global.rootp()->dumpTreeFile(v3Global.debugFilename("prelinkdot-find.tree"));
     }
     if (step == LDS_PRIMARY || step == LDS_PARAMED) {
         // Initial link stage, resolve parameters
         const LinkDotParamVisitor visitors{rootp, &state};
-        if (debug() >= 5 || dumpTreeLevel() >= 9) {
+        if (dumpTreeEitherLevel() >= 9) {
+            V3Global::dumpCheckGlobalTree("prelinkdot-param");
+        } else if (debug() >= 5) {
             v3Global.rootp()->dumpTreeFile(v3Global.debugFilename("prelinkdot-param.tree"));
         }
     } else if (step == LDS_ARRAYED) {
@@ -3796,7 +3823,9 @@ void V3LinkDot::linkDotGuts(AstNetlist* rootp, VLinkDotStep step) {
         // process AstScope's.  This needs to be separate pass after whole hierarchy graph created.
         const LinkDotScopeVisitor visitors{rootp, &state};
         v3Global.assertScoped(true);
-        if (debug() >= 5 || dumpTreeLevel() >= 9) {
+        if (dumpTreeEitherLevel() >= 9) {
+            V3Global::dumpCheckGlobalTree("prelinkdot-scoped");
+        } else if (debug() >= 5) {
             v3Global.rootp()->dumpTreeFile(v3Global.debugFilename("prelinkdot-scoped.tree"));
         }
     } else {
@@ -3814,23 +3843,23 @@ void V3LinkDot::linkDotGuts(AstNetlist* rootp, VLinkDotStep step) {
 void V3LinkDot::linkDotPrimary(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     linkDotGuts(nodep, LDS_PRIMARY);
-    V3Global::dumpCheckGlobalTree("linkdot", 0, dumpTreeLevel() >= 6);
+    V3Global::dumpCheckGlobalTree("linkdot", 0, dumpTreeEitherLevel() >= 6);
 }
 
 void V3LinkDot::linkDotParamed(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     linkDotGuts(nodep, LDS_PARAMED);
-    V3Global::dumpCheckGlobalTree("linkdotparam", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("linkdotparam", 0, dumpTreeEitherLevel() >= 3);
 }
 
 void V3LinkDot::linkDotArrayed(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     linkDotGuts(nodep, LDS_ARRAYED);
-    V3Global::dumpCheckGlobalTree("linkdot", 0, dumpTreeLevel() >= 6);
+    V3Global::dumpCheckGlobalTree("linkdot", 0, dumpTreeEitherLevel() >= 6);
 }
 
 void V3LinkDot::linkDotScope(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     linkDotGuts(nodep, LDS_SCOPED);
-    V3Global::dumpCheckGlobalTree("linkdot", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("linkdot", 0, dumpTreeEitherLevel() >= 3);
 }

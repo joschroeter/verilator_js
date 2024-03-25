@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -53,6 +53,7 @@ V3DupFinder::iterator V3DupFinder::findDuplicate(AstNode* nodep, V3DupFinderUser
 }
 
 void V3DupFinder::dumpFile(const string& filename, bool tree) {
+    UINFO(2, "Dumping " << filename << endl);
     const std::unique_ptr<std::ofstream> logp{V3File::new_ofstream(filename)};
     if (logp->fail()) v3fatal("Can't write " << filename);
 

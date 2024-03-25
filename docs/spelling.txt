@@ -146,6 +146,7 @@ Grulfen
 Gu
 Gunter
 Guo
+Hameed
 Hao
 Haojin
 Harboe
@@ -180,6 +181,7 @@ Jannis
 Jasen
 Jens
 Jeras
+Jiaxun
 Jiuyang
 Joannou
 Joly
@@ -437,6 +439,7 @@ Verilog
 Vighnesh
 Viktor
 Vilp
+Vlip
 Vm
 Vukobratovic
 Wai
@@ -460,6 +463,7 @@ Xiaoliang
 Xiaoyi
 Xuan
 Xuanqi
+Yao
 Yazdanbakhsh
 Yernagula
 Yi
@@ -519,6 +523,7 @@ buildenv
 bv
 bvs
 callValueCbs
+callgrind
 casex
 casez
 casted
@@ -583,8 +588,10 @@ der
 dereference
 desassign
 destructor
+desynchronization
 detections
 dev
+devcontainer
 devel
 dir
 displayb
@@ -612,6 +619,7 @@ dut
 dx
 dynarray
 elab
+eliasphanna
 elike
 elsif
 endcase
@@ -634,6 +642,7 @@ envvar
 eof
 errae
 erroring
+esynr
 et
 eval
 evals
@@ -665,6 +674,7 @@ foreach
 fprintf
 fprofile
 fread
+freloop
 frewind
 fs
 fscanf
@@ -687,6 +697,7 @@ genvars
 getenv
 getline
 ggdb
+glibc
 gmake
 gmon
 gotFinish
@@ -731,6 +742,7 @@ ish
 isunbounded
 isunknown
 jobserver
+json
 jwoutersymatra
 killua
 lang
@@ -743,6 +755,7 @@ libext
 libgoogle
 libsystemc
 libtcmalloc
+libverilated
 linkers
 linter
 linux
@@ -900,6 +913,7 @@ recrem
 redeclaring
 regs
 reloop
+replaceShiftOp
 resetall
 respecified
 rodata
@@ -913,6 +927,7 @@ sVerilator
 sawatzke
 sc
 scalared
+sccache
 sccanf
 seg
 setuphold
@@ -937,6 +952,7 @@ stdin
 stdout
 stime
 stmts
+str
 strcasecmp
 stringification
 stringified
@@ -954,8 +970,11 @@ sv
 svBitVal
 svBitVecVal
 svGet
+svGetTime
+svGetTimePrecision
 svLogicVal
 svdpi
+svgGetTimeUnit
 swrite
 sys
 systemc
@@ -1011,8 +1030,10 @@ unsup
 untyped
 urandom
 uselib
+utimes
 uwire
 uwires
+valgrind
 vc
 vcd
 vcddiff
@@ -1035,6 +1056,7 @@ vlt
 vltstd
 vluint
 vpi
+vpiConstType
 vpiDefName
 vpiInstance
 vpiLeftRange
@@ -1043,6 +1065,7 @@ vpiSize
 vpiSuppressVal
 vpiTimeUnit
 vpiType
+vpiUndefined
 vpm
 vpp
 warmup

@@ -3,7 +3,7 @@
 //
 // Code available from: https://verilator.org
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you can
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you can
 // redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -58,6 +58,9 @@
 # define VL_ATTR_PRINTF(fmtArgNum) __attribute__((format(printf, (fmtArgNum), (fmtArgNum) + 1)))
 # define VL_ATTR_PURE __attribute__((pure))
 # define VL_ATTR_UNUSED __attribute__((unused))
+#ifndef VL_ATTR_WARN_UNUSED_RESULT
+# define VL_ATTR_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
+#endif
 # if !defined(_WIN32) && !defined(__MINGW32__)
 // All VL_ATTR_WEAK symbols must be marked with the macOS -U linker flag in verilated.mk.in
 #  define VL_ATTR_WEAK __attribute__((weak))
@@ -164,6 +167,9 @@
 #ifndef VL_ATTR_UNUSED
 # define VL_ATTR_UNUSED  ///< Attribute that function that may be never used
 #endif
+#ifndef VL_ATTR_WARN_UNUSED_RESULT
+# define VL_ATTR_WARN_UNUSED_RESULT  ///< Attribute that return value of function must be used
+#endif
 #ifndef VL_ATTR_WEAK
 # define VL_ATTR_WEAK  ///< Attribute that function external that is optionally defined
 #endif
@@ -258,11 +264,11 @@
 #endif
 
 //=========================================================================
-// C++-2011
+// C++-2014
 
-#if __cplusplus >= 201103L || defined(__GXX_EXPERIMENTAL_CXX0X__) || defined(VL_CPPCHECK) || defined(_MSC_VER)
+#if __cplusplus >= 201402L || defined(VL_CPPCHECK) || defined(_MSC_VER)
 #else
-# error "Verilator requires a C++11 or newer compiler"
+# error "Verilator requires a C++14 or newer compiler"
 #endif
 
 #ifndef VL_NO_LEGACY
@@ -450,7 +456,7 @@ using ssize_t = uint32_t;  ///< signed size_t; returned from read()
 //=========================================================================
 // Verilated function size macros
 
-#define VL_MULS_MAX_WORDS 16  ///< Max size in words of MULS operation
+#define VL_MULS_MAX_WORDS 128  ///< Max size in words of MULS operation
 
 #ifndef VL_VALUE_STRING_MAX_WORDS
     #define VL_VALUE_STRING_MAX_WORDS 64  ///< Max size in words of String conversion operation
@@ -612,7 +618,7 @@ static inline double VL_ROUND(double n) {
 namespace vlstd {
 
 template <typename T>
-struct reverse_wrapper {
+struct reverse_wrapper final {
     const T& m_v;
 
     explicit reverse_wrapper(const T& a_v)
@@ -635,14 +641,6 @@ reverse_wrapper<T> reverse_view(const T& v) {
 template <class T>
 T const& as_const(T& v) VL_MT_SAFE {
     return v;
-}
-
-// C++14's std::exchange
-template <class T, class U = T>
-T exchange(T& obj, U&& new_value) {
-    T old_value = std::move(obj);
-    obj = std::forward<U>(new_value);
-    return old_value;
 }
 
 };  // namespace vlstd

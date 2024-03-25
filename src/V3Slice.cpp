@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -226,26 +226,30 @@ class SliceVisitor final : public VNVisitor {
             m_assignError = false;
             if (debug() >= 9) nodep->dumpTree("-  Deslice-In: ");
             AstNodeDType* const dtp = nodep->lhsp()->dtypep()->skipRefp();
+            AstNode* stp = nodep->rhsp();
             if (const AstUnpackArrayDType* const arrayp = VN_CAST(dtp, UnpackArrayDType)) {
-                // Left and right could have different ascending/descending range,
-                // but #elements is common and all variables are realigned to start at zero
-                // Assign of an ascending range slice to a descending range one must reverse the
-                // elements
-                AstNodeAssign* newlistp = nullptr;
-                const int elements = arrayp->rangep()->elementsConst();
-                for (int elemIdx = 0; elemIdx < elements; ++elemIdx) {
-                    AstNodeAssign* const newp
-                        = nodep->cloneType(cloneAndSel(nodep->lhsp(), elements, elemIdx),
-                                           cloneAndSel(nodep->rhsp(), elements, elemIdx));
-                    if (debug() >= 9) newp->dumpTree("-  new: ");
-                    newlistp = AstNode::addNext(newlistp, newp);
+                if (!VN_IS(stp, CvtPackedToUnpackArray)) {
+                    // Left and right could have different ascending/descending range,
+                    // but #elements is common and all variables are realigned to start at zero
+                    // Assign of an ascending range slice to a descending range one must reverse
+                    // the elements
+                    AstNodeAssign* newlistp = nullptr;
+                    const int elements = arrayp->rangep()->elementsConst();
+                    for (int elemIdx = 0; elemIdx < elements; ++elemIdx) {
+                        AstNodeAssign* const newp
+                            = nodep->cloneType(cloneAndSel(nodep->lhsp(), elements, elemIdx),
+                                               cloneAndSel(nodep->rhsp(), elements, elemIdx));
+                        if (debug() >= 9) newp->dumpTree("-  new: ");
+                        newlistp = AstNode::addNext(newlistp, newp);
+                    }
+                    if (debug() >= 9) nodep->dumpTree("-  Deslice-Dn: ");
+                    nodep->replaceWith(newlistp);
+                    VL_DO_DANGLING(nodep->deleteTree(), nodep);
+                    // Normal edit iterator will now iterate on all of the expansion assignments
+                    // This will potentially call this function again to resolve next level of
+                    // slicing
+                    return;
                 }
-                if (debug() >= 9) nodep->dumpTree("-  Deslice-Dn: ");
-                nodep->replaceWith(newlistp);
-                VL_DO_DANGLING(nodep->deleteTree(), nodep);
-                // Normal edit iterator will now iterate on all of the expansion assignments
-                // This will potentially call this function again to resolve next level of slicing
-                return;
             }
             VL_RESTORER(m_assignp);
             m_assignp = nodep;
@@ -335,5 +339,5 @@ public:
 void V3Slice::sliceAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { SliceVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("slice", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("slice", 0, dumpTreeEitherLevel() >= 3);
 }

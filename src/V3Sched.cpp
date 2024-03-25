@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -98,7 +98,7 @@ void remapSensitivities(const LogicByScope& lbs,
 }
 
 void invertAndMergeSenTreeMap(
-    std::unordered_map<const AstSenItem*, const AstSenTree*>& result,
+    V3Order::TrigToSenMap& result,
     const std::unordered_map<const AstSenTree*, AstSenTree*>& senTreeMap) {
     for (const auto& pair : senTreeMap) {
         UASSERT_OBJ(!pair.second->sensesp()->nextp(), pair.second, "Should be single AstSenIem");
@@ -167,25 +167,28 @@ AstNodeStmt* profExecSectionPop(FileLine* flp) {
     return new AstCStmt{flp, "VL_EXEC_TRACE_ADD_RECORD(vlSymsp).sectionPop();\n"};
 }
 
-struct EvalLoop {
+struct EvalLoop final {
     // Flag set to true during the first iteration of the loop
     AstVarScope* firstIterp;
-    // The loop continuation flag (set to true to loop again)
-    AstVarScope* continuep = nullptr;
     // The loop itself and statements around it
     AstNodeStmt* stmtsp = nullptr;
 };
 
 // Create an eval loop with all the trimmings.
-EvalLoop createEvalLoop(AstNetlist* netlistp,  //
-                        const std::string& tag,  // Tag for current phase
-                        const string& name,  // Name of current phase
-                        bool slow,  // Should create slow functions
-                        AstVarScope* trigp,  // The trigger vector
-                        AstCFunc* dumpFuncp,  // Trigger dump function for debugging only
-                        AstNodeStmt* innerp,  // The inner loop, if any
-                        AstNodeStmt* phasePrepp,  // Prep statements run before checking triggers
-                        AstNodeStmt* phaseWorkp  // The work to do if anything triggered
+EvalLoop createEvalLoop(
+    AstNetlist* netlistp,  //
+    const std::string& tag,  // Tag for current phase
+    const string& name,  // Name of current phase
+    bool slow,  // Should create slow functions
+    AstVarScope* trigp,  // The trigger vector
+    AstCFunc* dumpFuncp,  // Trigger dump function for debugging only
+    AstNodeStmt* innerp,  // The inner loop, if any
+    AstNodeStmt* phasePrepp,  // Prep statements run before checking triggers
+    AstNodeStmt* phaseWorkp,  // The work to do if anything triggered
+    // Extra statements to run after the work, even if no triggers fired. This function is
+    // passed a variable, which must be set to true if we must continue and loop again,
+    // and must be unmodified otherwise.
+    std::function<AstNodeStmt*(AstVarScope*)> phaseExtra = [](AstVarScope*) { return nullptr; }  //
 ) {
     const std::string varPrefix = "__V" + tag;
     AstScope* const scopeTopp = netlistp->topScopep()->scopep();
@@ -212,6 +215,9 @@ EvalLoop createEvalLoop(AstNetlist* netlistp,  //
         AstIf* const ifp = new AstIf{flp, new AstVarRef{flp, executeFlagp, VAccess::READ}};
         ifp->addThensp(phaseWorkp);
         phaseFuncp->addStmtsp(ifp);
+
+        // Construct the extra statements
+        if (AstNodeStmt* const extrap = phaseExtra(executeFlagp)) phaseFuncp->addStmtsp(extrap);
 
         // The function returns ture iff it did run the work
         phaseFuncp->rtnType("bool");
@@ -272,7 +278,7 @@ EvalLoop createEvalLoop(AstNetlist* netlistp,  //
     // Prof-exec section pop
     if (v3Global.opt.profExec()) stmtps->addNext(profExecSectionPop(flp));
 
-    return {firstIterFlagp, continueFlagp, stmtps};
+    return {firstIterFlagp, stmtps};
 }
 
 //============================================================================
@@ -349,14 +355,9 @@ LogicClasses gatherLogicClasses(AstNetlist* netlistp) {
     LogicClasses result;
 
     netlistp->foreach([&](AstScope* scopep) {
-        std::vector<AstActive*> empty;
-
         scopep->foreach([&](AstActive* activep) {
             AstSenTree* const senTreep = activep->sensesp();
-            if (!activep->stmtsp()) {
-                // Some AstActives might be empty due to previous optimizations
-                empty.push_back(activep);
-            } else if (senTreep->hasStatic()) {
+            if (senTreep->hasStatic()) {
                 UASSERT_OBJ(!senTreep->sensesp()->nextp(), activep,
                             "static initializer with additional sensitivities");
                 result.m_static.emplace_back(scopep, activep);
@@ -387,8 +388,6 @@ LogicClasses gatherLogicClasses(AstNetlist* netlistp) {
                 }
             }
         });
-
-        for (AstActive* const activep : empty) activep->unlinkFrBack()->deleteTree();
     });
 
     return result;
@@ -485,7 +484,7 @@ void createFinal(AstNetlist* netlistp, const LogicClasses& logicClasses) {
 //============================================================================
 // A TriggerKit holds all the components related to a TRIGGERVEC variable
 
-struct TriggerKit {
+struct TriggerKit final {
     // The TRIGGERVEC AstVarScope representing these trigger flags
     AstVarScope* const m_vscp;
     // The AstCFunc that computes the current active triggers
@@ -526,7 +525,7 @@ struct TriggerKit {
 //============================================================================
 // EvalKit groups items that have to be passed to createEval() for a given eval region
 
-struct EvalKit {
+struct EvalKit final {
     // The TRIGGERVEC AstVarScope representing the region's trigger flags
     AstVarScope* const m_vscp = nullptr;
     // The AstCFunc that computes the region's active triggers
@@ -785,7 +784,7 @@ void createSettle(AstNetlist* netlistp, AstCFunc* const initFuncp, SenExprBuilde
     remapSensitivities(hybrid, trig.m_map);
 
     // Create the inverse map from trigger ref AstSenTree to original AstSenTree
-    std::unordered_map<const AstSenItem*, const AstSenTree*> trigToSen;
+    V3Order::TrigToSenMap trigToSen;
     invertAndMergeSenTreeMap(trigToSen, trig.m_map);
 
     // First trigger is for pure combinational triggers (first iteration)
@@ -865,7 +864,7 @@ AstNode* createInputCombLoop(AstNetlist* netlistp, AstCFunc* const initFuncp,
     remapSensitivities(logic, trig.m_map);
 
     // Create the inverse map from trigger ref AstSenTree to original AstSenTree
-    std::unordered_map<const AstSenItem*, const AstSenTree*> trigToSen;
+    V3Order::TrigToSenMap trigToSen;
     invertAndMergeSenTreeMap(trigToSen, trig.m_map);
 
     // The trigger top level inputs (first iteration)
@@ -1011,25 +1010,27 @@ void createEval(AstNetlist* netlistp,  //
             workp->addNext(createTriggerClearCall(flp, nbaKit.m_vscp));
             //
             return workp;
-        }());
+        }(),
+        // Extra work (not conditional on having had a fired trigger)
+        [&](AstVarScope* continuep) -> AstNodeStmt* {
+            // Check if any dynamic NBAs are pending, if there are any in the design
+            if (!netlistp->nbaEventp()) return nullptr;
+            AstVarScope* const nbaEventp = netlistp->nbaEventp();
+            AstVarScope* const nbaEventTriggerp = netlistp->nbaEventTriggerp();
+            UASSERT(nbaEventTriggerp, "NBA event trigger var should exist");
+            netlistp->nbaEventp(nullptr);
+            netlistp->nbaEventTriggerp(nullptr);
 
-    // If the NBA event exists, trigger it in 'nba'
-    if (AstVarScope* const nbaEventp = netlistp->nbaEventp()) {
-        AstVarScope* const nbaEventTriggerp = netlistp->nbaEventTriggerp();
-        UASSERT(nbaEventTriggerp, "NBA event trigger var should exist");
-        netlistp->nbaEventp(nullptr);
-        netlistp->nbaEventTriggerp(nullptr);
-
-        AstIf* const ifp = new AstIf{flp, new AstVarRef{flp, nbaEventTriggerp, VAccess::READ}};
-        ifp->addThensp(setVar(topLoop.continuep, 1));
-        ifp->addThensp(setVar(nbaEventTriggerp, 0));
-        AstCMethodHard* const firep
-            = new AstCMethodHard{flp, new AstVarRef{flp, nbaEventp, VAccess::WRITE}, "fire"};
-        firep->dtypeSetVoid();
-        ifp->addThensp(firep->makeStmt());
-        // actLoop.stmtsp happens to be the head of the loop body inside the NBA loop...
-        actLoop.stmtsp->addNext(ifp);
-    }
+            // If a dynamic NBA is pending, clear the pending flag and fire the commit event
+            AstIf* const ifp = new AstIf{flp, new AstVarRef{flp, nbaEventTriggerp, VAccess::READ}};
+            ifp->addThensp(setVar(continuep, 1));
+            ifp->addThensp(setVar(nbaEventTriggerp, 0));
+            AstCMethodHard* const firep
+                = new AstCMethodHard{flp, new AstVarRef{flp, nbaEventp, VAccess::WRITE}, "fire"};
+            firep->dtypeSetVoid();
+            ifp->addThensp(firep->makeStmt());
+            return ifp;
+        });
 
     if (!obsKit.empty()) {
         // Create the Observed eval loop, which becomes the top level loop.
@@ -1260,7 +1261,7 @@ void schedule(AstNetlist* netlistp) {
     const auto& actTimingDomains = timingKit.remapDomains(actTrigMap);
 
     // Create the inverse map from trigger ref AstSenTree to original AstSenTree
-    std::unordered_map<const AstSenItem*, const AstSenTree*> trigToSenAct;
+    V3Order::TrigToSenMap trigToSenAct;
     invertAndMergeSenTreeMap(trigToSenAct, preTrigMap);
     invertAndMergeSenTreeMap(trigToSenAct, actTrigMap);
 
@@ -1280,8 +1281,8 @@ void schedule(AstNetlist* netlistp) {
             if (it != actTimingDomains.end()) out = it->second;
             if (vscp->varp()->isWrittenByDpi()) out.push_back(dpiExportTriggeredAct);
             if (vscp->varp()->sensIfacep()) {
-                const auto it = vifTriggeredAct.find(vscp->varp()->sensIfacep());
-                if (it != vifTriggeredAct.end()) out.push_back(it->second);
+                const auto sit = vifTriggeredAct.find(vscp->varp()->sensIfacep());
+                if (sit != vifTriggeredAct.end()) out.push_back(sit->second);
             }
         });
     splitCheck(actFuncp);
@@ -1299,7 +1300,7 @@ void schedule(AstNetlist* netlistp) {
         for (LogicByScope* lbs : logic) remapSensitivities(*lbs, trigMap);
 
         // Create the inverse map from trigger ref AstSenTree to original AstSenTree
-        std::unordered_map<const AstSenItem*, const AstSenTree*> trigToSen;
+        V3Order::TrigToSenMap trigToSen;
         invertAndMergeSenTreeMap(trigToSen, trigMap);
 
         AstSenTree* const dpiExportTriggered
@@ -1317,8 +1318,8 @@ void schedule(AstNetlist* netlistp) {
                 if (it != timingDomains.end()) out = it->second;
                 if (vscp->varp()->isWrittenByDpi()) out.push_back(dpiExportTriggered);
                 if (vscp->varp()->sensIfacep()) {
-                    const auto it = vifTriggered.find(vscp->varp()->sensIfacep());
-                    if (it != vifTriggered.end()) out.push_back(it->second);
+                    const auto sit = vifTriggered.find(vscp->varp()->sensIfacep());
+                    if (sit != vifTriggered.end()) out.push_back(sit->second);
                 }
             });
 
@@ -1375,7 +1376,7 @@ void schedule(AstNetlist* netlistp) {
 
     netlistp->dpiExportTriggerp(nullptr);
 
-    V3Global::dumpCheckGlobalTree("sched", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("sched", 0, dumpTreeEitherLevel() >= 3);
 }
 
 }  // namespace V3Sched

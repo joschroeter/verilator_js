@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -48,7 +48,7 @@ class GateEitherVertex VL_NOT_FINAL : public V3GraphVertex {
     bool m_dedupable = true;  // True if this node should be able to be deduped
     bool m_consumed = false;  // Output goes to something meaningful
 public:
-    GateEitherVertex(V3Graph* graphp)
+    explicit GateEitherVertex(V3Graph* graphp)
         : V3GraphVertex{graphp} {}
     ~GateEitherVertex() override = default;
 
@@ -683,7 +683,8 @@ class GateInline final {
     // METHODS
     void recordSubstitution(AstVarScope* vscp, AstNodeExpr* substp, AstNode* logicp) {
         m_hasPending.emplace(logicp, ++m_ord);  // It's OK if already present
-        m_substitutions(logicp).emplace(vscp, substp->cloneTreePure(false));
+        const auto pair = m_substitutions(logicp).emplace(vscp, nullptr);
+        if (pair.second) pair.first->second = substp->cloneTreePure(false);
     }
 
     void commitSubstitutions(AstNode* logicp) {
@@ -811,8 +812,9 @@ class GateInline final {
                 // If the consumer logic writes one of the variables that the substitution
                 // is reading, then we would get a cycles, so we cannot do that.
                 bool canInline = true;
-                for (V3GraphEdge* edgep = dstVtxp->outBeginp(); edgep; edgep = edgep->outNextp()) {
-                    const GateVarVertex* const consVVertexp = edgep->top()->as<GateVarVertex>();
+                for (V3GraphEdge* dedgep = dstVtxp->outBeginp(); dedgep;
+                     dedgep = dedgep->outNextp()) {
+                    const GateVarVertex* const consVVertexp = dedgep->top()->as<GateVarVertex>();
                     if (readVscps.count(consVVertexp->varScp())) {
                         canInline = false;
                         break;
@@ -1311,6 +1313,18 @@ class GateUnused final {
         }
     }
 
+    static void warnUnused(const AstNode* const nodep) {
+        if (nodep->fileline()->warnIsOff(V3ErrorCode::UNUSEDLOOP)) return;
+
+        if (const AstNodeProcedure* const procedurep = VN_CAST(nodep, NodeProcedure)) {
+            if (procedurep->stmtsp())
+                procedurep->stmtsp()->foreach([](const AstWhile* const whilep) {  //
+                    whilep->v3warn(UNUSEDLOOP, "Loop is not used and will be optimized out");
+                    whilep->fileline()->modifyWarnOff(V3ErrorCode::UNUSEDLOOP, true);
+                });
+        }
+    }
+
     // Remove unused logic
     void remove() {
         for (V3GraphVertex *vtxp = m_graph.verticesBeginp(), *nextp; vtxp; vtxp = nextp) {
@@ -1318,6 +1332,8 @@ class GateUnused final {
             if (GateLogicVertex* const lVtxp = vtxp->cast<GateLogicVertex>()) {
                 if (!lVtxp->consumed() && lVtxp->activep()) {  // activep is nullptr under cfunc
                     AstNode* const nodep = lVtxp->nodep();
+                    warnUnused(nodep);
+
                     UINFO(8, "    Remove unconsumed " << nodep << endl);
                     nodep->unlinkFrBack();
                     VL_DO_DANGLING(nodep->deleteTree(), nodep);
@@ -1327,7 +1343,7 @@ class GateUnused final {
         }
     }
 
-    GateUnused(GateGraph& graph)
+    explicit GateUnused(GateGraph& graph)
         : m_graph{graph} {
         mark();  // Mark all used vertices
         remove();  // Remove unused vertices
@@ -1381,5 +1397,5 @@ void V3Gate::gateAll(AstNetlist* netlistp) {
         if (dumpGraphLevel() >= 3) graphp->dumpDotFilePrefixed("gate_final");
     }
 
-    V3Global::dumpCheckGlobalTree("gate", 0, dumpTreeLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("gate", 0, dumpTreeEitherLevel() >= 3);
 }

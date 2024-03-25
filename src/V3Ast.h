@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -31,6 +31,7 @@
 #include "V3Ast__gen_forward_class_decls.h"  // From ./astgen
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <set>
@@ -47,9 +48,6 @@ class ExecMTask;
 class VFlagLogicPacked {};
 class VFlagBitPacked {};
 class VFlagChildDType {};  // Used by parser.y to select constructor that sets childDType
-
-// Used as key for another map, needs operator<, hence not an unordered_set
-using MTaskIdSet = std::set<int>;  // Set of mtaskIds for Var sorting
 
 //######################################################################
 
@@ -98,7 +96,7 @@ using MTaskIdSet = std::set<int>;  // Set of mtaskIds for Var sorting
 
 //######################################################################
 
-struct VNTypeInfo {
+struct VNTypeInfo final {
     const char* m_namep;
     enum uint8_t {
         OP_UNUSED,
@@ -125,6 +123,7 @@ public:
     constexpr VNType(en _e) VL_MT_SAFE : m_e{_e} {}
     explicit VNType(int _e)
         : m_e(static_cast<en>(_e)) {}  // Need () or GCC 4.8 false warning
+    // cppcheck-suppress danglingTempReference
     const VNTypeInfo* typeInfo() const VL_MT_SAFE { return &typeInfoTable[m_e]; }
     constexpr operator en() const VL_MT_SAFE { return m_e; }
 };
@@ -291,6 +290,8 @@ public:
         NO_INLINE_TASK,
         PUBLIC_MODULE,
         PUBLIC_TASK,
+        UNROLL_DISABLE,
+        UNROLL_FULL,
         FULL_CASE,
         PARALLEL_CASE,
         ENUM_SIZE
@@ -319,7 +320,6 @@ public:
     enum en : uint8_t {
         // These must be in general -> most specific order, as we sort by it
         // in V3Const::visit AstSenTree
-        ET_ILLEGAL,
         // Involving a variable
         ET_CHANGED,  // Value changed
         ET_BOTHEDGE,  // POSEDGE | NEGEDGE (i.e.: 'edge' in Verilog)
@@ -339,8 +339,6 @@ public:
     enum en m_e;
     bool clockedStmt() const {
         static const bool clocked[] = {
-            false,  // ET_ILLEGAL
-
             true,  // ET_CHANGED
             true,  // ET_BOTHEDGE
             true,  // ET_POSEDGE
@@ -364,20 +362,19 @@ public:
         case ET_BOTHEDGE: return ET_BOTHEDGE;
         case ET_POSEDGE: return ET_NEGEDGE;
         case ET_NEGEDGE: return ET_POSEDGE;
-        default: UASSERT_STATIC(0, "Inverting bad edgeType()");
+        default: UASSERT_STATIC(0, "Inverting bad edgeType()"); return ET_NEGEDGE;
         }
-        return VEdgeType::ET_ILLEGAL;
     }
     const char* ascii() const {
         static const char* const names[]
-            = {"%E-edge", "CHANGED", "BOTH",   "POS",     "NEG",   "EVENT", "TRUE",
-               "COMBO",   "HYBRID",  "STATIC", "INITIAL", "FINAL", "NEVER"};
+            = {"CHANGED", "BOTH",   "POS",    "NEG",     "EVENT", "TRUE",
+               "COMBO",   "HYBRID", "STATIC", "INITIAL", "FINAL", "NEVER"};
         return names[m_e];
     }
     const char* verilogKwd() const {
         static const char* const names[]
-            = {"%E-edge", "[changed]", "edge",     "posedge",   "negedge", "[event]", "[true]",
-               "*",       "[hybrid]",  "[static]", "[initial]", "[final]", "[never]"};
+            = {"[changed]", "edge",     "posedge",  "negedge",   "[event]", "[true]",
+               "*",         "[hybrid]", "[static]", "[initial]", "[final]", "[never]"};
         return names[m_e];
     }
     // Return true iff this and the other have mutually exclusive transitions
@@ -393,8 +390,6 @@ public:
         }
         return false;
     }
-    VEdgeType()
-        : m_e{ET_ILLEGAL} {}
     // cppcheck-suppress noExplicitConstructor
     constexpr VEdgeType(en _e)
         : m_e{_e} {}
@@ -683,7 +678,7 @@ public:
             /* UNKNOWN:                   */ "",  // Should not be traced
             /* BIT:                       */ "BIT",
             /* BYTE:                      */ "BYTE",
-            /* CHANDLE:                   */ "",
+            /* CHANDLE:                   */ "LONGINT",
             /* EVENT:                     */ "EVENT",
             /* INT:                       */ "INT",
             /* INTEGER:                   */ "INTEGER",
@@ -1472,10 +1467,10 @@ class VSelfPointerText final {
 public:
     // CONSTRUCTORS
     class Empty {};  // for creator type-overload selection
-    VSelfPointerText(Empty)
+    explicit VSelfPointerText(Empty)
         : m_strp{s_emptyp} {}
     class This {};  // for creator type-overload selection
-    VSelfPointerText(This)
+    explicit VSelfPointerText(This)
         : m_strp{s_thisp} {}
     VSelfPointerText(This, const string& field)
         : m_strp{std::make_shared<const string>("this->" + field)} {}
@@ -1954,7 +1949,7 @@ public:
     static constexpr int INSTR_COUNT_PLI = 20;  // PLI routines
 
     // ACCESSORS
-    virtual string name() const { return ""; }
+    virtual string name() const VL_MT_STABLE { return ""; }
     virtual string origName() const { return ""; }
     virtual void name(const string& name) {
         this->v3fatalSrc("name() called on object without name() method");
@@ -1969,7 +1964,7 @@ public:
     static string prettyName(const string& namein) VL_PURE;  // Name for printing out to the user
     static string vpiName(const string& namein);  // Name for vpi access
     static string prettyNameQ(const string& namein) {  // Quoted pretty name (for errors)
-        return std::string{"'"} + prettyName(namein) + "'";
+        return "'"s + prettyName(namein) + "'";
     }
     // Encode user name into internal C representation
     static string encodeName(const string& namein);
@@ -1998,7 +1993,7 @@ public:
 
     // TODO stomp these width functions out, and call via dtypep() instead
     inline int width() const VL_MT_STABLE;
-    inline int widthMin() const;
+    inline int widthMin() const VL_MT_STABLE;
     int widthMinV() const {
         return v3Global.widthMinUsage() == VWidthMinUsage::VERILOG_WIDTH ? widthMin() : width();
     }
@@ -2084,6 +2079,7 @@ public:
     // ACCESSORS for specific types
     // Alas these can't be virtual or they break when passed a nullptr
     inline bool isClassHandleValue() const;
+    inline bool isNull() const;
     inline bool isZero() const;
     inline bool isOne() const;
     inline bool isNeqZero() const;
@@ -2216,6 +2212,23 @@ public:
     static void dumpTreeFileGdb(const AstNode* nodep, const char* filenamep = nullptr);
     void dumpTreeDot(std::ostream& os = std::cout) const;
     void dumpTreeDotFile(const string& filename, bool doDump = true);
+    virtual void dumpJson(std::ostream& os) const { dumpJsonGen(os); };  // node specific fields
+    // Generated by 'astgen'. Dumps node-specific pointers and calls 'dumpJson()' of parent class
+    // Note that we don't make it virtual as it would result in infinite recursion
+    void dumpJsonGen(std::ostream& os) const {};
+    virtual void dumpTreeJsonOpGen(std::ostream& os, const string& indent) const {};
+    void dumpTreeJson(std::ostream& os, const string& indent = "") const;
+    void dumpTreeJsonFile(const string& filename, bool doDump = true);
+    void dumpJsonMetaFile(const string& filename);
+
+    // Render node address for dumps. By default this is just the address
+    // printed as hex, but with --dump-tree-addrids we map addresses to short
+    // strings with a bijection to aid human readability. Observe that this might
+    // not actually be a unique identifier as the address can get reused after a
+    // node has been freed.
+    static std::string nodeAddr(const AstNode* nodep) {
+        return v3Global.opt.dumpTreeAddrids() ? v3Global.ptrToId(nodep) : cvtToHex(nodep);
+    }
 
     // METHODS - static advancement
     static AstNode* afterCommentp(AstNode* nodep) {
@@ -2287,6 +2300,11 @@ protected:
     void iterateAndNextConst(VNVisitorConst& v);
     // Use instead VNVisitor::iterateSubtreeReturnEdits
     AstNode* iterateSubtreeReturnEdits(VNVisitor& v);
+
+    static void dumpJsonNum(std::ostream& os, const std::string& name, int64_t val);
+    static void dumpJsonBool(std::ostream& os, const std::string& name, bool val);
+    static void dumpJsonStr(std::ostream& os, const std::string& name, const std::string& val);
+    static void dumpJsonPtr(std::ostream& os, const std::string& name, const AstNode* const valp);
 
 private:
     void iterateListBackwardsConst(VNVisitorConst& v);
@@ -2842,5 +2860,7 @@ AstNode* VNVisitor::iterateSubtreeReturnEdits(AstNode* nodep) {
 
 // Inline function definitions need to go last
 #include "V3AstInlines.h"
+void dumpNodeListJson(std::ostream& os, const AstNode* nodep, const std::string& listName,
+                      const string& indent);
 
 #endif  // Guard

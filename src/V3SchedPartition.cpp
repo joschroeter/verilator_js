@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -185,7 +185,6 @@ class SchedGraphBuilder final : public VNVisitor {
         // Clocked or hybrid logic has explicit sensitivity, so add edge from sensitivity vertex
         if (!m_senTreep->hasCombo()) {
             m_senTreep->foreach([this, nodep, logicVtxp](AstSenItem* senItemp) {
-                if (senItemp->isIllegal()) return;
                 UASSERT_OBJ(senItemp->isClocked() || senItemp->isHybrid(), nodep,
                             "Non-clocked SenItem under clocked SenTree");
                 V3GraphVertex* const eventVtxp = getSenVertex(senItemp);

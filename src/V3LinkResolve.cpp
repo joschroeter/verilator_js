@@ -6,7 +6,7 @@
 //
 //*************************************************************************
 //
-// Copyright 2003-2023 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -80,7 +80,8 @@ class LinkResolveVisitor final : public VNVisitor {
         // Initial assignments under function/tasks can just be simple
         // assignments without the initial
         if (m_ftaskp) {
-            VL_DO_DANGLING(nodep->replaceWith(nodep->stmtsp()->unlinkFrBackWithNext()), nodep);
+            nodep->replaceWith(nodep->stmtsp()->unlinkFrBackWithNext());
+            VL_DO_DANGLING(pushDeletep(nodep), nodep);
         }
     }
     void visit(AstNodeCoverOrAssert* nodep) override {
@@ -116,7 +117,7 @@ class LinkResolveVisitor final : public VNVisitor {
             if (nodep->name() == "randomize" || nodep->name() == "srandom") {
                 nodep->v3error(nodep->prettyNameQ()
                                << " is a predefined class method; redefinition not allowed"
-                                  " (IEEE 1800-2017 18.6.3)");
+                                  " (IEEE 1800-2023 18.6.3)");
             }
             nodep->classMethod(true);
         }
@@ -515,5 +516,5 @@ void V3LinkResolve::linkResolve(AstNetlist* rootp) {
         const LinkResolveVisitor visitor{rootp};
         LinkBotupVisitor{rootp};
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("linkresolve", 0, dumpTreeLevel() >= 6);
+    V3Global::dumpCheckGlobalTree("linkresolve", 0, dumpTreeEitherLevel() >= 6);
 }

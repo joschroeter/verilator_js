@@ -61,6 +61,7 @@
 #include "V3HierBlock.h"
 #include "V3Inline.h"
 #include "V3Inst.h"
+#include "V3Instrumentation.h"
 #include "V3Interface.h"
 #include "V3Life.h"
 #include "V3LifePost.h"
@@ -180,6 +181,9 @@ static void process() {
         V3LinkDot::linkDotParamed(v3Global.rootp());  // Cleanup as made new modules
         V3LinkLValue::linkLValue(v3Global.rootp());  // Resolve new VarRefs
         V3Error::abortIfErrors();
+
+        // Test for Instrumentation of Fault Injection
+        V3Instrumentation::instrumentationAll(v3Global.rootp());
 
         // Remove any modules that were parameterized and are no longer referenced.
         V3Dead::deadifyModules(v3Global.rootp());

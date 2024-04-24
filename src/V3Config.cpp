@@ -18,6 +18,8 @@
 
 #include "V3Config.h"
 
+#include "V3Instrumentation.h"
+
 #include "V3String.h"
 
 #include <memory>
@@ -642,6 +644,11 @@ void V3Config::addInline(FileLine* fl, const string& module, const string& ftask
             V3ConfigResolver::s().modules().at(module).ftasks().at(ftask).setNoInline(on);
         }
     }
+}
+
+void V3Config::addInstrument(FileLine* fl, const string& model, const string& imodule, const string& var) {
+    // Add logic to store the variables with the coresponding descripton
+    V3Instrumentation::storeInstrumentationData(model, imodule, var);
 }
 
 void V3Config::addModulePragma(const string& module, VPragmaType pragma) {

@@ -25,13 +25,10 @@ class AstNetlist;
 //=========================================================================
 
 class V3Instrumentation final {
-    // TYPES
-    using InstrumentationList = std::vector<std::string>;
-    static V3Mutex s_mutex; // Protect members
-    static InstrumentationList s_instrumentationList VL_GUARDED_BY(s_mutex);
 public:
     static void instrumentationAll(AstNetlist* nodep) VL_MT_DISABLED;
-    static void write(const std::string& filename) VL_MT_SAFE_EXCLUDES(s_mutex);
+    static void storeInstrumentationData(const std::string& model, const std::string& module, const std::string& var);
+    static void getInstrumentationData(const std::string& configType); 
 };
 
 #endif // Guard

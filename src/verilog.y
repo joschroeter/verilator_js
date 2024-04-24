@@ -468,6 +468,7 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %token<fl>              yVLT_HIER_PARAMS            "hier_params"
 %token<fl>              yVLT_HIER_WORKERS           "hier_workers"
 %token<fl>              yVLT_INLINE                 "inline"
+%token<fl>              yVLT_INSTRUMENT             "instrument"
 %token<fl>              yVLT_ISOLATE_ASSIGNMENTS    "isolate_assignments"
 %token<fl>              yVLT_LINT_OFF               "lint_off"
 %token<fl>              yVLT_LINT_ON                "lint_on"
@@ -7648,6 +7649,8 @@ vltItem:
                         { V3Config::addVarAttr($<fl>1, *$2, *$3, *$4, $1, $5); }
         |       vltInlineFront vltDModuleE vltDFTaskE
                         { V3Config::addInline($<fl>1, *$2, *$3, $1); }
+        |       yVLT_INSTRUMENT yVLT_D_MODEL yaSTRING yVLT_D_MODULE yaSTRING yVLT_D_VAR yaSTRING
+                        { V3Config::addInstrument($<fl>1, *$3, *$5, *$7); }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile
                         { V3Config::addCoverageBlockOff(*$2, 0); }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile yVLT_D_LINES yaINTNUM

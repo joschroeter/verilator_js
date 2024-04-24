@@ -32,7 +32,47 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 
 //##################################################################################
 // Instrumentation class functions
+class InstrumentationManager {
+    private:
+    struct InstrumentationConfig
+    {
+        std::string model;
+        std::string module;
+        std::string var;
 
+    };
+    
+    std::vector<InstrumentationConfig> configs;
+
+    public:
+
+    std::string getInstrumentConfig(const std::string& configType) {
+        std::stringstream configData; 
+
+        for (const auto& config : configs)
+        {
+            if(configType == "model") {
+                configData<<config.model;
+            } else if(configType == "module") {
+                configData<<config.module;
+            } else if(configType == "var") {
+                configData<<config.var;
+            } else {
+                return "Invalid Config-Type!";
+            }
+        }
+        return configData.str();
+    }
+
+    void storeInstrumentConfig(const std::string& model, const std::string& module, const std::string& var) {
+        configs.emplace_back(InstrumentationConfig{model, module, var});
+    }
+};
+
+static InstrumentationManager instrumentationManager;
+
+//##################################################################################
+// Instrumentation class visitor
 class InstrumentationVisitor final : public VNVisitor {
     //
     AstVar* m_tmp_var = nullptr;
@@ -42,7 +82,7 @@ class InstrumentationVisitor final : public VNVisitor {
         AstTask* m_taskp = nullptr;
 
         for(nodep; nodep; nodep = nodep->backp()) {
-            if(VN_IS(nodep, Task) && VN_AS(nodep, Task)->name() == "fault_injection") {
+            if(VN_IS(nodep, Task) && VN_AS(nodep, Task)->name() == instrumentationManager.getInstrumentConfig("model")) {
                 m_taskp = VN_AS(nodep, Task);
                 break;
             }
@@ -79,7 +119,8 @@ class InstrumentationVisitor final : public VNVisitor {
 
     // Visitors
     void visit(AstModule* nodep) {
-        if(nodep->name() == "top") {
+        std::cout << "This is stated in the InstrumentationConfig struct for MODULE:" << instrumentationManager.getInstrumentConfig("module") << endl;
+        if(nodep->name() == instrumentationManager.getInstrumentConfig("module")) {
             for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                 if(VN_IS(n->nextp(), AssignW)) {
                     std::cout << "Found IT!" << endl;
@@ -87,7 +128,8 @@ class InstrumentationVisitor final : public VNVisitor {
                     // Adding Task
                     AstTask* m_taskp = nullptr;
                     std::cout << "Trying to add Taks...\n";
-                    m_taskp = new AstTask(n->fileline(), "fault_injection", nullptr);
+                    v3Global.dpi(true);
+                    m_taskp = new AstTask(n->fileline(), instrumentationManager.getInstrumentConfig("model"), nullptr);
                     m_taskp->dpiImport(true);
                     m_taskp->prototype(true);
                     n->addNextHere(m_taskp);
@@ -96,7 +138,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
                     // Adding Var
                     std::cout << "Trying to add temporary variable...\n";
-                    m_tmp_var = new AstVar(n->fileline(), VVarType::VAR, "tmp_x", VFlagChildDType{}, 
+                    m_tmp_var = new AstVar(n->fileline(), VVarType::VAR, "tmp_" + instrumentationManager.getInstrumentConfig("var"), VFlagChildDType{}, 
                                             new AstBasicDType(n->fileline(), VBasicDTypeKwd::BIT, VSigning::NOSIGN));
                     m_tmp_var->lifetime(VLifetime::STATIC);
                     m_tmp_var->trace(true);
@@ -106,8 +148,8 @@ class InstrumentationVisitor final : public VNVisitor {
 
                     // Adding Always
                     std::cout << "Trying to add Always...\n";
-                    AstTaskRef* m_taskrefp = new AstTaskRef(nodep->fileline(), "fault_inject", 
-                                                            new AstArg(nodep->fileline(), "tmp_x", 
+                    AstTaskRef* m_taskrefp = new AstTaskRef(nodep->fileline(), instrumentationManager.getInstrumentConfig("model"), 
+                                                            new AstArg(nodep->fileline(), "tmp_" + instrumentationManager.getInstrumentConfig("var"), 
                                                                         new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::WRITE)));
                     m_taskrefp->taskp(m_taskp);
                     n->addNextHere(new AstAlways(n->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr));
@@ -120,7 +162,7 @@ class InstrumentationVisitor final : public VNVisitor {
     }
 
     void visit(AstTask* nodep) {
-        if(nodep->name() == "fault_injection") {
+        if(nodep->name() == instrumentationManager.getInstrumentConfig("model")) {
             AstVar* m_fi_id = nullptr;
             AstVar* m_var_x = nullptr;
 
@@ -132,13 +174,13 @@ class InstrumentationVisitor final : public VNVisitor {
             m_fi_id->funcLocal(true);
             m_fi_id->lifetime(VLifetime::AUTOMATIC);
 
-            m_var_x = new AstVar(fl, VVarType::PORT, "x", VFlagChildDType{}, 
+            m_var_x = new AstVar(fl, VVarType::PORT, instrumentationManager.getInstrumentConfig("var"), VFlagChildDType{}, 
                                     new AstBasicDType(fl, VFlagBitPacked{}, 1));
             m_var_x->direction(VDirection::INPUT);
             m_var_x->funcLocal(true);
             m_var_x->lifetime(VLifetime::AUTOMATIC);
 
-            m_tmp_var = new AstVar(fl, VVarType::PORT, "tmp_x", VFlagChildDType{}, 
+            m_tmp_var = new AstVar(fl, VVarType::PORT, "tmp_" + instrumentationManager.getInstrumentConfig("var"), VFlagChildDType{}, 
                                     new AstBasicDType(fl, VFlagBitPacked{}, 1));
             m_tmp_var->direction(VDirection::OUTPUT);
             m_tmp_var->funcLocal(true);
@@ -156,7 +198,7 @@ class InstrumentationVisitor final : public VNVisitor {
         AstSenTree* m_newSenTree = nullptr;
         AstTaskRef* m_taskrefp = nullptr;
         
-        m_taskrefp = new AstTaskRef(nodep->fileline(), "fault_injection", nullptr);
+        m_taskrefp = new AstTaskRef(nodep->fileline(), instrumentationManager.getInstrumentConfig("model"), nullptr);
         m_taskrefp->taskp(getTaskp(nodep));
 
         m_newSenTree = new AstSenTree(nodep->fileline(), 
@@ -178,19 +220,19 @@ class InstrumentationVisitor final : public VNVisitor {
 
         nodep->addPinsp(new AstArg(nodep->fileline(), "", m_constp));
         nodep->addPinsp(new AstArg(nodep->fileline(), "", 
-                    new AstVarRef(nodep->fileline(), getVarp(nodep, "x"), VAccess::READ)));
+                    new AstVarRef(nodep->fileline(), getVarp(nodep, instrumentationManager.getInstrumentConfig("var")), VAccess::READ)));
         nodep->addPinsp(new AstArg(nodep->fileline(), "", 
-                    new AstVarRef(nodep->fileline(), getVarp(nodep, "tmp_x"), VAccess::WRITE)));
+                    new AstVarRef(nodep->fileline(), getVarp(nodep, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::WRITE)));
         iterateChildren(nodep);
     }
 
     void visit(AstAssignW* nodep) {
         std::cout << "Visiting AstAssign" << endl;
         for(AstNode* n = nodep->op1p(); n; n = n->nextp()) {
-            if(VN_IS(n, VarRef) && VN_AS(n, VarRef)->name() == "x") {
+            if(VN_IS(n, VarRef) && VN_AS(n, VarRef)->name() == instrumentationManager.getInstrumentConfig("var")) {
                 std::cout << "Found the VarRef Node in the AssignW" << endl;
                 std::cout << "Name: " << n->name() << " Type: " << n->type() << endl;
-                n->replaceWith(new AstVarRef(n->fileline(), getVarp(nodep, "tmp_x"), VAccess::READ));
+                n->replaceWith(new AstVarRef(n->fileline(), getVarp(nodep, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::READ));
                 std::cout << "Replacement succsessfull" << endl;
             }
         }
@@ -209,9 +251,16 @@ public:
 
 //##################################################################################
 // Instrumentation class functions
-
 void V3Instrumentation::instrumentationAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { InstrumentationVisitor{nodep}; }
     V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
+}
+
+void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& module, const std::string& var) {
+    instrumentationManager.storeInstrumentConfig(model, module, var);
+}
+
+void V3Instrumentation::getInstrumentationData(const std::string& configType) {
+    instrumentationManager.getInstrumentConfig(configType);
 }

@@ -183,8 +183,10 @@ static void process() {
         V3Error::abortIfErrors();
 
         // Test for Instrumentation of Fault Injection
-        V3Instrumentation::instrumentationAll(v3Global.rootp());
-
+        if (!V3Instrumentation::checkInstrumentationData()) {
+            V3Instrumentation::instrumentationAll(v3Global.rootp());
+        }
+        
         // Remove any modules that were parameterized and are no longer referenced.
         V3Dead::deadifyModules(v3Global.rootp());
         v3Global.checkTree();

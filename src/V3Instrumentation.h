@@ -26,9 +26,9 @@ class AstNetlist;
 
 class V3Instrumentation final {
 public:
+    static bool checkInstrumentationData();
     static void instrumentationAll(AstNetlist* nodep) VL_MT_DISABLED;
     static void storeInstrumentationData(const std::string& model, const std::string& module, const std::string& var);
-    static void getInstrumentationData(const std::string& configType); 
 };
 
 #endif // Guard

@@ -40,11 +40,18 @@ class InstrumentationManager {
         std::string module;
         std::string var;
 
+        bool hasData() const {
+            return false; 
+        }
     };
     
     std::vector<InstrumentationConfig> configs;
 
     public:
+    bool existingInstrumentConfig() const {
+        std::cout << "CONFIGS.EMPTY() returns: " << configs.empty() << endl;
+        return configs.empty();
+    }
 
     std::string getInstrumentConfig(const std::string& configType) {
         std::stringstream configData; 
@@ -257,10 +264,10 @@ void V3Instrumentation::instrumentationAll(AstNetlist* nodep) {
     V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
 }
 
-void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& module, const std::string& var) {
-    instrumentationManager.storeInstrumentConfig(model, module, var);
+bool V3Instrumentation::checkInstrumentationData() {
+    return instrumentationManager.existingInstrumentConfig();
 }
 
-void V3Instrumentation::getInstrumentationData(const std::string& configType) {
-    instrumentationManager.getInstrumentConfig(configType);
+void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& module, const std::string& var) {
+    instrumentationManager.storeInstrumentConfig(model, module, var);
 }

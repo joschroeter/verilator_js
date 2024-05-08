@@ -37,6 +37,7 @@ class InstrumentationManager {
     struct InstrumentationConfig
     {
         std::string model;
+        std::string id;
         std::string module;
         std::string var;
 
@@ -60,6 +61,8 @@ class InstrumentationManager {
         {
             if(configType == "model") {
                 configData<<config.model;
+            } else if(configType == "id") {
+                configData<<config.id;
             } else if(configType == "module") {
                 configData<<config.module;
             } else if(configType == "var") {
@@ -71,8 +74,8 @@ class InstrumentationManager {
         return configData.str();
     }
 
-    void storeInstrumentConfig(const std::string& model, const std::string& module, const std::string& var) {
-        configs.emplace_back(InstrumentationConfig{model, module, var});
+    void storeInstrumentConfig(const std::string& model, const std::string& id, const std::string& module, const std::string& var) {
+        configs.emplace_back(InstrumentationConfig{model, id, module, var});
     }
 };
 
@@ -81,7 +84,6 @@ static InstrumentationManager instrumentationManager;
 //##################################################################################
 // Instrumentation class visitor
 class InstrumentationVisitor final : public VNVisitor {
-    //
     AstVar* m_tmp_var = nullptr;
 
     // METHODS
@@ -222,7 +224,7 @@ class InstrumentationVisitor final : public VNVisitor {
     void visit(AstTaskRef* nodep) {
         AstConst* m_constp = nullptr;
         
-        m_constp = new AstConst(nodep->fileline(), AstConst::Unsized32{}, 0);
+        m_constp = new AstConst(nodep->fileline(), AstConst::Unsized32{}, std::stoi(instrumentationManager.getInstrumentConfig("id"))); // The 1 in the end needs to be extracted from the instrumentationManager
         m_constp->dtypeChgSigned();
 
         nodep->addPinsp(new AstArg(nodep->fileline(), "", m_constp));
@@ -268,6 +270,6 @@ bool V3Instrumentation::checkInstrumentationData() {
     return instrumentationManager.existingInstrumentConfig();
 }
 
-void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& module, const std::string& var) {
-    instrumentationManager.storeInstrumentConfig(model, module, var);
+void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& id, const std::string& module, const std::string& var) {
+    instrumentationManager.storeInstrumentConfig(model, id, module, var);
 }

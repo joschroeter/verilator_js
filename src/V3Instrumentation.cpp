@@ -163,7 +163,21 @@ class InstrumentationVisitor final : public VNVisitor {
                     m_taskrefp->taskp(m_taskp);
                     n->addNextHere(new AstAlways(n->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr));
                     n = n->nextp();
-                    std::cout << "Added Always!\n";
+                    std::cout << "Added Always!\n";  
+                }
+                // Editing the AssignW
+                if (VN_IS(n, AssignW)) {
+                    std::cout << "Trying to edit AssignW...\n";
+                    for (AstNode* m = n->op1p(); m; m->nextp()){
+                        if(VN_IS(m, VarRef) && VN_AS(m, VarRef)->name() == instrumentationManager.getInstrumentConfig("var")) {
+                            std::cout << "Found the VarRef Node in the AssignW" << endl;
+                            std::cout << "Name: " << m->name() << " Type: " << m->type() << endl;
+                            VN_CAST(m, AssignW);
+                            m->replaceWith(new AstVarRef(m->fileline(), getVarp(m, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::READ));
+                            std::cout << "Replacement succsessfull" << endl;
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -232,20 +246,6 @@ class InstrumentationVisitor final : public VNVisitor {
                     new AstVarRef(nodep->fileline(), getVarp(nodep, instrumentationManager.getInstrumentConfig("var")), VAccess::READ)));
         nodep->addPinsp(new AstArg(nodep->fileline(), "", 
                     new AstVarRef(nodep->fileline(), getVarp(nodep, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::WRITE)));
-        iterateChildren(nodep);
-    }
-
-    void visit(AstAssignW* nodep) {
-        std::cout << "Visiting AstAssign" << endl;
-        for(AstNode* n = nodep->op1p(); n; n = n->nextp()) {
-            if(VN_IS(n, VarRef) && VN_AS(n, VarRef)->name() == instrumentationManager.getInstrumentConfig("var")) {
-                std::cout << "Found the VarRef Node in the AssignW" << endl;
-                std::cout << "Name: " << n->name() << " Type: " << n->type() << endl;
-                n->replaceWith(new AstVarRef(n->fileline(), getVarp(nodep, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::READ));
-                std::cout << "Replacement succsessfull" << endl;
-            }
-        }
-        std::cout << "Assign points to: " << nodep->op1p() << endl;
         iterateChildren(nodep);
     }
 

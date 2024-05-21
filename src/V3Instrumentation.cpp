@@ -85,6 +85,7 @@ static InstrumentationManager instrumentationManager;
 // Instrumentation class visitor
 class InstrumentationVisitor final : public VNVisitor {
     AstVar* m_tmp_var = nullptr;
+    bool replacement = false;
 
     // METHODS
       AstTask* getTaskp(AstNode* nodep) {
@@ -129,6 +130,7 @@ class InstrumentationVisitor final : public VNVisitor {
     // Visitors
     void visit(AstModule* nodep) {
         std::cout << "This is stated in the InstrumentationConfig struct for MODULE:" << instrumentationManager.getInstrumentConfig("module") << endl;
+        std::cout << "This is the nodep->name(): " << nodep->name() << " and the type()" << nodep->type() << endl;
         if(nodep->name() == instrumentationManager.getInstrumentConfig("module")) {
             for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                 if(VN_IS(n->nextp(), AssignW)) {
@@ -168,12 +170,15 @@ class InstrumentationVisitor final : public VNVisitor {
                 // Editing the AssignW
                 if (VN_IS(n, AssignW)) {
                     std::cout << "Trying to edit AssignW...\n";
-                    for (AstNode* m = n->op1p(); m; m->nextp()){
-                        if(VN_IS(m, VarRef) && VN_AS(m, VarRef)->name() == instrumentationManager.getInstrumentConfig("var")) {
+                    for (AstNode* n2 = n->op1p(); n2; n2->nextp()){
+                        if(VN_IS(n2, Not)) {
+                            n2->replaceWith(new AstVarRef(n2->fileline(), getVarp(n2, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::READ));
+                            break;
+                        } else if(VN_IS(n2, VarRef) && VN_AS(n2, VarRef)->name() == instrumentationManager.getInstrumentConfig("var")) {
                             std::cout << "Found the VarRef Node in the AssignW" << endl;
-                            std::cout << "Name: " << m->name() << " Type: " << m->type() << endl;
-                            VN_CAST(m, AssignW);
-                            m->replaceWith(new AstVarRef(m->fileline(), getVarp(m, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::READ));
+                            std::cout << "Name: " << n2->name() << " Type: " << n2->type() << endl;
+                            VN_CAST(n2, AssignW);
+                            n2->replaceWith(new AstVarRef(n2->fileline(), getVarp(n2, "tmp_" + instrumentationManager.getInstrumentConfig("var")), VAccess::READ));
                             std::cout << "Replacement succsessfull" << endl;
                             break;
                         }

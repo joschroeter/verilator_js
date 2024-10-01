@@ -42,6 +42,7 @@ class InstrumentationManager {
         std::string model;
         std::string id;
         std::string module;
+        std::string instance;
         std::string var;
 
         bool hasData() const {
@@ -53,7 +54,6 @@ class InstrumentationManager {
 
     public:
     bool existingInstrumentConfig() const {
-        std::cout << "CONFIGS.EMPTY() returns: " << configs.empty() << endl;
         return configs.empty();
     }
 
@@ -72,6 +72,8 @@ class InstrumentationManager {
             configData << config.id;
         } else if (configType == "module") {
             configData << config.module;
+        } else if (configType == "instance") {
+            configData << config.instance;
         } else if (configType == "var") {
             configData << config.var;
         } else {
@@ -86,12 +88,113 @@ class InstrumentationManager {
         return configs.size();
     }
 
-    void storeInstrumentConfig(const std::string& model, const std::string& id, const std::string& module, const std::string& var) {
-        configs.emplace_back(InstrumentationConfig{model, id, module, var});
+    void storeInstrumentConfig(const std::string& model, const std::string& id, const std::string& module, const std::string& instance, const std::string& var) {
+        configs.emplace_back(InstrumentationConfig{model, id, module, instance, var});
     }
 };
 
 static InstrumentationManager instrumentationManager;
+
+//##################################################################################
+// Instrumentation class parameterizer
+class InstrumentationParameterizer final : public VNVisitor {
+    AstModule* m_current_module = nullptr;
+    AstVar* m_param = nullptr;
+    size_t configIndex = 0;
+
+    // Method
+    std::string getCurrentInstrumentConfig(std::string configType, size_t index) {
+        std::string current = "";
+        current = instrumentationManager.getInstrumentConfig(configType, index);
+        return current;
+    }
+
+    std::string getPreviousInstrumentConfig(std::string configType, size_t index) {
+        std::string previous = "";
+        previous = (index > 0) ? instrumentationManager.getInstrumentConfig(configType, index-1) : "";
+        return previous;
+    }
+
+
+    // Visitors
+    void visit(AstModule* nodep) { // Sobald eine instrumentation existiert muss ich den Parameter in der "normalen" Variante vom modul einsetzten
+        std::cout << "Module visitor!" << endl;
+        configIndex = 0;
+        AstVar* m_param = nullptr;
+        m_current_module = nodep;
+        std::cout << m_current_module << " This is the current module." << endl;
+        std::cout << "Stated in instrumentation Config for Module: " << getCurrentInstrumentConfig("module", configIndex) << std::endl;
+        std::cout << "Stated before the current module in the instrumentation config for module: " << getPreviousInstrumentConfig("module", configIndex) << std::endl;
+        if(nodep->name() == getCurrentInstrumentConfig("module", configIndex)){
+            std::cout << "Found the correct Module!" << std::endl;
+            if(getCurrentInstrumentConfig("module", configIndex) != getPreviousInstrumentConfig("module", configIndex) /* Schauen wie man das bei meherern modulen macht? Drüber iterieren und mit vorherigem vergleichen? && aktuelles modul != vorherigem modul !ACHTUNG! bei erster Instrumentierung nicht machen */) {
+                for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                    std::cout << "Backp Type from n: " << n->backp()->type() << endl;
+                    if(VN_IS(n->backp(), Module)) {
+                        std::cout << "Found the module!" << endl;
+                        m_param = new AstVar(n->fileline(), VVarType::GPARAM, "instrumentation", VFlagChildDType{}, 
+                                             new AstBasicDType(n->fileline(), VBasicDTypeKwd::LOGIC_IMPLICIT, VSigning::NOSIGN));
+                        m_param->lifetime(VLifetime::STATIC);                     
+                        m_param->trace(true);
+                        n->addHereThisAsNext(m_param);
+                        std::cout << "Added var instrument!" << endl;
+                        break;
+                    }
+                }
+            } else if(getCurrentInstrumentConfig("module", configIndex) == getPreviousInstrumentConfig("module", configIndex)) {
+            std::cout << "INFORMATIONAL: Instrumentation for the same module! Therefore not adding a parameter to the module!" << std::endl;
+            }
+        } 
+        iterateChildren(nodep);
+        m_current_module = nullptr;
+    }
+
+    void visit(AstVar* nodep) { // Hier das ganz so lösen wie oben beim Modul, da es sich um das VAR beim Modul handelt
+        std::cout << "Variable visitor!" << endl;
+        AstConst* m_param_const = nullptr;
+        assert(m_current_module);
+        if(nodep->name() == "instrumentation") {
+            if(m_current_module->name() == getCurrentInstrumentConfig("module", configIndex) && getCurrentInstrumentConfig("module", configIndex) != getPreviousInstrumentConfig("module", configIndex)){
+                std::cout << "Found the correct Var!" << endl;
+                m_param_const = new AstConst(nodep->fileline(), AstConst::Unsized32Signed{}, 0);
+                nodep->valuep(m_param_const); //addAttrsp führt zu fehlern, nicht die richtige ebene für const wir brauchen 1.2.3 bekommen so aber 1.2.4; valuep löst das ganze
+                std::cout << "Added Parameter constant!" << endl;
+                if( configIndex < instrumentationManager.getInstrumentationAmount()-1) { configIndex++; }
+            } else if (getCurrentInstrumentConfig("module", configIndex) == getPreviousInstrumentConfig("module", configIndex)) {
+                std::cout << "INFORMATIONAL: Instrumentation for the same module! Therefore not adding a parameter to the module!" << std::endl;
+                if( configIndex < instrumentationManager.getInstrumentationAmount()-1) { configIndex++; }
+            }
+        iterateChildren(nodep);
+        }
+    }
+
+    void visit(AstCell* nodep) {
+        std::cout << "Cell visitor!" << endl;
+        AstPin* m_param_pinp = nullptr;
+        if(nodep->name() == getCurrentInstrumentConfig("instance", configIndex)) { //inv1 ist hier hardgecoded, passendes inv muss eingesetzt werden bei instrumentierung von meherern variablen in einer instance muss vor her gechekt werden ob gleiche instance wie vorhin, wenn ja muss die Cell nicht nochmal bearbeitet werden.
+            // Hier die for loop einbauen. Für jede instrumentierung gibt es eine neue Const, deren num um eins steigt 
+            if(getCurrentInstrumentConfig("instance", configIndex) != getPreviousInstrumentConfig("instance", configIndex)) {
+                AstConst* m_pin_const = new AstConst(nodep->fileline(), AstConst::Unsized32Signed{}, configIndex + 1);
+                m_pin_const->dtypeChgSigned();
+
+                m_param_pinp = new AstPin(nodep->fileline(), 0, "instrumentation", m_pin_const);
+                m_param_pinp->param(true);
+                m_param_pinp->svDotName(true);                      
+                nodep->addParamsp(m_param_pinp); // Adden als Paramsp führt zu kopieren als Pinsp führt das zu nichts
+                std::cout << "Added Pin instrument!" << endl;
+                if( configIndex < instrumentationManager.getInstrumentationAmount()-1) { configIndex++; }
+            }
+        }
+        iterateChildren(nodep);
+    }
+
+    //-------------------------------------------------------
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
+
+public:
+    explicit InstrumentationParameterizer(AstNetlist* nodep){ iterate(nodep); }
+    ~InstrumentationParameterizer() override = default;
+};
 
 //##################################################################################
 // Instrumentation class visitor
@@ -113,17 +216,17 @@ class InstrumentationVisitor final : public VNVisitor {
         return m_taskp;
     }
 
-    AstVar* getClkPointer(AstNode* nodep) {
-        AstVar* m_clkp = nullptr;
+    AstVar* getOutputPointer(AstNode* nodep) {
+        AstVar* m_outp = nullptr;
 
-        for(AstNode* n = nodep; n; n = n->backp()) {
-            if(VN_IS(n, Var) && VN_AS(n, Var)->name() == "clk")
+        for(nodep; nodep; nodep = nodep->backp()) {
+            if(VN_IS(nodep, Var) && VN_AS(nodep, Var)->name() == instrumentationManager.getInstrumentConfig("var", configIndex) && VN_AS(nodep, Var)->direction() == VDirection::INPUT)
             {
-                m_clkp = VN_AS(n, Var);
+                m_outp = VN_AS(nodep, Var);
                 break;
             }
         }
-        return m_clkp;
+        return m_outp;
     }
 
     AstVar* getVarp(AstNode* nodep, string var_name) {
@@ -144,9 +247,10 @@ class InstrumentationVisitor final : public VNVisitor {
     void visit(AstModule* nodep) {
         m_current_module = nodep;
         std::cout << "Hier sind wir am Anfang des module visitors: " << configIndex << endl;
-        std::cout << "This is stated in the InstrumentationConfig struct for MODULE:" << instrumentationManager.getInstrumentConfig("module", configIndex) << endl;
-        std::cout << "This is the currently visited node name: " << nodep->name() << " and the type" << nodep->type() << endl;
-        if(nodep->name() == instrumentationManager.getInstrumentConfig("module", configIndex)) {
+        std::cout << "This is stated in the InstrumentationConfig struct for MODULE:" << instrumentationManager.getInstrumentConfig("module", configIndex)+"__I"+std::to_string(configIndex+1) << " and INSTANCE:" << instrumentationManager.getInstrumentConfig("instance", configIndex) << endl;
+        std::cout << "This is the currently visited node name: " << nodep->name() << " and the type: " << nodep->type() << endl;
+        std::cout << "This is the currently visited instance name: " << nodep->someInstanceName() << endl; 
+        if(nodep->name() == instrumentationManager.getInstrumentConfig("module", configIndex)+"__I"+std::to_string(configIndex+1) /*&& nodep->someInstanceName() == instrumentationManager.getInstrumentConfig("instance", configIndex)*/) {
             for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                 if(VN_IS(n->nextp(), AssignW)) {
                     std::cout << "Found the Module mentioned in the configfile!" << endl;
@@ -154,7 +258,6 @@ class InstrumentationVisitor final : public VNVisitor {
                     // Adding Task
                     AstTask* m_taskp = nullptr;
                     std::cout << "Trying to add Tasks...\n";
-                    v3Global.dpi(true);
                     m_taskp = new AstTask(n->fileline(), instrumentationManager.getInstrumentConfig("model", configIndex), nullptr);
                     m_taskp->dpiImport(true);
                     m_taskp->prototype(true);
@@ -201,8 +304,6 @@ class InstrumentationVisitor final : public VNVisitor {
                     }
                 }
             }
-            // Wenn ich den check schaffe, dass die nachfolgenden visitor zu dem passenden modul gehören, dann darf ich diese rechnung hier erst beim letzten visitor machen: if( configIndex < instrumentationManager.getInstrumentationAmount()-1) { configIndex++; }
-            // da der Visitor anscheinend erst durch die unterprogramme geht (folgenden Visitors) und dann zur nächsten Iteration springt.
         }                                                         
         std::cout << "Hier sind wir am Ende des module visitors: " << configIndex << endl; 
         iterateChildren(nodep);
@@ -213,7 +314,7 @@ class InstrumentationVisitor final : public VNVisitor {
         assert(m_current_module);
         std::cout << "And now we are in the visit AstTask!" << endl;
         std::cout << nodep->backp()->type() << endl;
-        if(nodep->name() == instrumentationManager.getInstrumentConfig("model", configIndex) && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", configIndex)) {
+        if(nodep->name() == instrumentationManager.getInstrumentConfig("model", configIndex) && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", configIndex)+"__I"+std::to_string(configIndex+1)) {
             AstVar* m_fi_id = nullptr;
             AstVar* m_var_x = nullptr;
 
@@ -246,7 +347,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
     void visit (AstAlways* nodep) {
         assert(m_current_module);
-        if(m_current_module->name() == instrumentationManager.getInstrumentConfig("module", configIndex)) {
+        if(m_current_module->name() == instrumentationManager.getInstrumentConfig("module", configIndex)+"__I"+std::to_string(configIndex+1)) {
             AstBegin* m_newBegin = nullptr;
             AstSenTree* m_newSenTree = nullptr;
             AstTaskRef* m_taskrefp = nullptr;
@@ -256,7 +357,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
             m_newSenTree = new AstSenTree(nodep->fileline(), 
                             new AstSenItem(nodep->fileline(), VEdgeType::ET_POSEDGE, 
-                                            new AstVarRef(nodep->fileline(), getClkPointer(nodep), VAccess::READ)));
+                                            new AstVarRef(nodep->fileline(), getOutputPointer(nodep), VAccess::READ)));
             m_newBegin = new AstBegin(nodep->fileline(), "",
                             new AstStmtExpr(nodep->fileline(), m_taskrefp), 
                             false, false);
@@ -268,7 +369,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
     void visit(AstTaskRef* nodep) {
         assert(m_current_module);
-        if(m_current_module->name() == instrumentationManager.getInstrumentConfig("module", configIndex)) {
+        if(m_current_module->name() == instrumentationManager.getInstrumentConfig("module", configIndex)+"__I"+std::to_string(configIndex+1)) {
             AstConst* m_constp_id = nullptr;
 
             m_constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{}, std::stoi(instrumentationManager.getInstrumentConfig("id", configIndex))); 
@@ -301,10 +402,17 @@ void V3Instrumentation::instrumentationAll(AstNetlist* nodep) {
     V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
 }
 
+void V3Instrumentation::instrumentationParam(AstNetlist* nodep){
+    UINFO(2, __FUNCTION__ << ": " << endl);
+    { InstrumentationParameterizer{nodep}; }
+    V3Global::dumpCheckGlobalTree("instrumentationparam", 0, dumpTreeEitherLevel() >= 3);
+}
+
 bool V3Instrumentation::checkInstrumentationData() {
     return instrumentationManager.existingInstrumentConfig();
 }
 
-void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& id, const std::string& module, const std::string& var) {
-    instrumentationManager.storeInstrumentConfig(model, id, module, var);
+void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& id, const std::string& module, const std::string& instance, const std::string& var) {
+    instrumentationManager.storeInstrumentConfig(model, id, module, instance, var);
 }
+

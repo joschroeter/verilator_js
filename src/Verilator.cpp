@@ -149,6 +149,11 @@ static void process() {
             std::exit(0);
         }
 
+        // Create a parameter which indicates the usage of Fault Injection for the Module/Cell
+        if (!V3Instrumentation::checkInstrumentationData()) { // Optimierung(?): Hier loopen und wenn aktuelles modul und instance in instrumentierung gleich mit vorherigen sind, dann wird parameter erstellung gar nicht erst ausgeführt 
+            V3Instrumentation::instrumentationParam(v3Global.rootp());
+        }
+
         // Convert parseref's to varrefs, and other directly post parsing fixups
         V3LinkParse::linkParse(v3Global.rootp());
         // Cross-link signal names
@@ -184,6 +189,7 @@ static void process() {
 
         // Test for Instrumentation of Fault Injection
         if (!V3Instrumentation::checkInstrumentationData()) {
+            v3Global.dpi(true);
             V3Instrumentation::instrumentationAll(v3Global.rootp());
         }
         

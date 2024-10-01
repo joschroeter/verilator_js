@@ -646,9 +646,9 @@ void V3Config::addInline(FileLine* fl, const string& module, const string& ftask
     }
 }
 
-void V3Config::addInstrument(FileLine* fl, const string& imodel, const string& iid, const string& imodule, const string& ivar) {
+void V3Config::addInstrument(FileLine* fl, const string& imodel, const string& iid, const string& imodule, const string& iinstance, const string& ivar) {
     // Add logic to store the variables with the coresponding descripton
-    V3Instrumentation::storeInstrumentationData(imodel, iid, imodule, ivar);
+    V3Instrumentation::storeInstrumentationData(imodel, iid, imodule, iinstance, ivar);
 }
 
 void V3Config::addModulePragma(const string& module, VPragmaType pragma) {

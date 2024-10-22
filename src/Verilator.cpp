@@ -151,7 +151,16 @@ static void process() {
 
         // Create a parameter which indicates the usage of Fault Injection for the Module/Cell
         if (!V3Instrumentation::checkInstrumentationData()) { // Optimierung(?): Hier loopen und wenn aktuelles modul und instance in instrumentierung gleich mit vorherigen sind, dann wird parameter erstellung gar nicht erst ausgeführt 
-            V3Instrumentation::instrumentationParam(v3Global.rootp());
+            for(size_t configIndexParam = 0; configIndexParam <= V3Instrumentation::getInstrumentationAmount()-1; configIndexParam++) {
+                if(V3Instrumentation::cmpCurrent2NextInstrumentation("current", "module", configIndexParam) == V3Instrumentation::cmpCurrent2NextInstrumentation("previous", "module", configIndexParam) && V3Instrumentation::cmpCurrent2NextInstrumentation("current", "instance", configIndexParam) == V3Instrumentation::cmpCurrent2NextInstrumentation("previous", "instance", configIndexParam)) {
+                    std::cout << "INFORMATIONAL: Instrumentation for the same module! Therefore not adding a parameter to the module!" << std::endl;    
+                } else {
+                    std::cout << V3Instrumentation::cmpCurrent2NextInstrumentation("current", "module", configIndexParam) << endl;
+                    std::cout << V3Instrumentation::cmpCurrent2NextInstrumentation("previous", "module", configIndexParam) << endl;
+                    V3Instrumentation::instrumentationParam(v3Global.rootp(), configIndexParam);  
+                }
+            }
+
         }
 
         // Convert parseref's to varrefs, and other directly post parsing fixups
@@ -190,7 +199,11 @@ static void process() {
         // Test for Instrumentation of Fault Injection
         if (!V3Instrumentation::checkInstrumentationData()) {
             v3Global.dpi(true);
-            V3Instrumentation::instrumentationAll(v3Global.rootp());
+            for(size_t configIndexAll = 0; configIndexAll <= V3Instrumentation::getInstrumentationAmount()-1; configIndexAll++) {
+                std::cout << "This is the configuration amount: " << V3Instrumentation::getInstrumentationAmount() << endl;
+                std::cout << "We are now in the configuration: " << configIndexAll + 1 << endl; 
+                V3Instrumentation::instrumentationAll(v3Global.rootp(), configIndexAll);
+            }
         }
         
         // Remove any modules that were parameterized and are no longer referenced.

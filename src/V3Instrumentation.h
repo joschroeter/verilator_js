@@ -27,6 +27,7 @@ class AstNetlist;
 class V3Instrumentation final {
 public:
     static bool checkInstrumentationData();
+    static bool checkForExistingInstrumentation(std::string configType, size_t targetIndexParam);
     static size_t getInstrumentationAmount();
     static std::string cmpCurrent2NextInstrumentation(std::string position, std::string configType, size_t indexParam);
     static void instrumentationAll(AstNetlist* nodep, size_t configIndexAll) VL_MT_DISABLED;

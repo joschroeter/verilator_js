@@ -165,11 +165,12 @@ static void process() {
 
         // Improved Duplication check
         if(!V3Instrumentation::checkInstrumentationData()) {
-            V3Instrumentation::instrumentationParam(v3Global.rootp(), 0); //The First instrumentation does not need to be checked for a duplicate
-            for(size_t configIndexParam = 1; configIndexParam <= V3Instrumentation::getInstrumentationAmount()-1; configIndexParam++) {
-                if(V3Instrumentation::checkForExistingInstrumentation("module", configIndexParam) & V3Instrumentation::checkForExistingInstrumentation("instance", configIndexParam)) {
+            //V3Instrumentation::instrumentationParam(v3Global.rootp(), 0); //The First instrumentation does not need to be checked for a duplicate
+            for(size_t configIndexParam = 0; configIndexParam <= V3Instrumentation::getInstrumentationAmount()-1; configIndexParam++) {
+                if(V3Instrumentation::checkForExistingInstrumentation(configIndexParam) != -1) {
                    std::cout << "INFORMATION: Instrumentation of the same module and instance! Therfore not adding a parameter to the module and cell!" << std::endl; 
                 } else {
+                    std::cout << "INFORMATION: Instrumentation of a new module and instance! Therfore adding a parameter to the module and cell!" << std::endl;
                     V3Instrumentation::instrumentationParam(v3Global.rootp(), configIndexParam);
                 }
             }
@@ -212,9 +213,15 @@ static void process() {
         if (!V3Instrumentation::checkInstrumentationData()) {
             v3Global.dpi(true);
             for(size_t configIndexAll = 0; configIndexAll <= V3Instrumentation::getInstrumentationAmount()-1; configIndexAll++) {
-                std::cout << "This is the configuration amount: " << V3Instrumentation::getInstrumentationAmount() << endl;
-                std::cout << "We are now in the configuration: " << configIndexAll + 1 << endl; 
-                V3Instrumentation::instrumentationAll(v3Global.rootp(), configIndexAll);
+                if(V3Instrumentation::checkForExistingInstrumentation(configIndexAll) != -1) {
+                   std::cout << "INFORMATION: Instrumentation of the same module and instance! Therfore taking the first config as search for Namingconvetion!" << std::endl; 
+                   size_t namingIndex = V3Instrumentation::checkForExistingInstrumentation(configIndexAll);
+                   V3Instrumentation::instrumentationAll(v3Global.rootp(), configIndexAll, namingIndex);
+                } else {
+                    std::cout << "This is the configuration amount: " << V3Instrumentation::getInstrumentationAmount() << endl;
+                    std::cout << "We are now in the configuration: " << configIndexAll + 1 << endl; 
+                    V3Instrumentation::instrumentationAll(v3Global.rootp(), configIndexAll, configIndexAll);
+                }
             }
         }
         

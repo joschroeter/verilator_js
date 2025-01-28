@@ -30,8 +30,10 @@ public:
     static int checkForExistingInstrumentation(size_t targetIndexParam);
     static size_t getInstrumentationAmount();
     static std::string cmpCurrent2NextInstrumentation(std::string position, std::string configType, size_t indexParam);
+    static void cleanHandledInstrumentation();
     static void instrumentationAll(AstNetlist* nodep, size_t configIndexAll, size_t namingIndex) VL_MT_DISABLED;
-    static void instrumentationParam(AstNetlist* nodep, size_t configIndexParam) VL_MT_DISABLED;
+    static void instrumentationModuleDup(AstNetlist* nodep, size_t configIndexDup) VL_MT_DISABLED;
+    static void instrumentationFix(AstNetlist* nodep, size_t configIndexFix, size_t namingIndex, bool instDone) VL_MT_DISABLED;
     static void storeInstrumentationData(const std::string& model, const std::string& id, const std::string& module, const std::string& instance, const std::string& var);
 };
 

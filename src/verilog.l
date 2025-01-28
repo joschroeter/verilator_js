@@ -154,6 +154,7 @@ vnum    {vnum1}|{vnum2}|{vnum3}|{vnum4}|{vnum5}
   -?"-mtask"            { FL; return yVLT_D_MTASK; }
   -?"-rule"             { FL; return yVLT_D_RULE; }
   -?"-scope"            { FL; return yVLT_D_SCOPE; }
+  -?"-target"           { FL; return yVLT_D_TARGET; }
   -?"-task"             { FL; return yVLT_D_TASK; }
   -?"-var"              { FL; return yVLT_D_VAR; }
   -?"-workers"          { FL; return yVLT_D_WORKERS; }

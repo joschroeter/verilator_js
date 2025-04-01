@@ -171,8 +171,14 @@ class ModuleDuplication final : public VNVisitor {
         if(nodep->name() == getCurrentInstrumentConfig("module", m_configIndexDup)){
             m_foundModule = true;
             m_cloned_module = nodep->cloneTree(false);
-            m_cloned_module->name(getCurrentInstrumentConfig("module", m_configIndexDup)+"__fiinst__"+std::to_string(m_configIndexDup+1));
-            nodep->addNext(m_cloned_module);
+            if(VN_IS(nodep->backp(), Netlist) == true) {
+                m_cloned_module->name(getCurrentInstrumentConfig("module", m_configIndexDup)+"__fiinst__"+std::to_string(m_configIndexDup+1));
+                nodep->setOrigName("nonInstrumentedTop");
+                VN_CAST(nodep->backp(), Netlist)->addModulesp(m_cloned_module);
+            } else {
+                m_cloned_module->name(getCurrentInstrumentConfig("module", m_configIndexDup)+"__fiinst__"+std::to_string(m_configIndexDup+1));
+                nodep->addNext(m_cloned_module);
+            }
         } else if(nodep->nextp() == nullptr && m_foundModule == false) {
             v3error("In .vlt file defined MODULE could not be found: " << getCurrentInstrumentConfig("module", m_configIndexDup));
         }
@@ -239,6 +245,7 @@ AstVarRef* getvarrefp(AstNode* nodep, string node_name) {
             for(AstNode* n=nodep->op1p(); n; n = n->nextp()) {
                 if(VN_IS(n, Module) && n->name().substr(0, base_name.size()) == base_name) {
                     m_tmp_var = getVarp(n->op2p(), "tmp_"+instrumentationManager.getInstrumentConfig("var", m_configIndexFix));
+                    m_tmp_var->origName("tmp_"+instrumentationManager.getInstrumentConfig("var", m_configIndexFix));
                 }
             }
         }
@@ -256,7 +263,11 @@ AstVarRef* getvarrefp(AstNode* nodep, string node_name) {
                 m_tmp_pin->modVarp(m_tmp_var);
                 nodep->addPinsp(m_tmp_pin);
             }
-        } else if(!VN_IS(nodep->nextp(), Cell) && m_instanceFound == false) {
+        }
+    }
+
+    void visit(AstTypeTable* nodep) {
+        if(!m_instanceFound && !m_instDone && instrumentationManager.getInstrumentConfig("instance", m_configIndexFix) != "") {
             v3error("In .vlt file defined INSTANCE could not be found: " << instrumentationManager.getInstrumentConfig("instance", m_configIndexFix));
         }
     }
@@ -273,14 +284,17 @@ public:
 // Instrumentation class visitor
 class InstrumentationVisitor final : public VNVisitor {
     AstVar* m_tmp_var = nullptr;
+    AstVar* m_tmp_var_port = nullptr;
     AstModule* m_current_module = nullptr;
     AstAlways* m_alwaysp = nullptr;
+    AstAssignW* m_original_AssignW = nullptr;
     AstTaskRef* m_taskrefp = nullptr;
     AstVar* m_inst_var_clonetree = nullptr;
     AstVar* m_inst_var_original = nullptr;
     AstVarRef* m_added_varrefp = nullptr;
     AstVarRef* m_previous_varrefp = nullptr;
     bool m_outputChanged = false;
+    bool m_newAssignWAdded = false;
     size_t m_configIndexAll;
     size_t m_namingIndex;
     std::string base_name = instrumentationManager.getInstrumentConfig("module", m_configIndexAll) + "__fiinst__" + std::to_string(m_namingIndex + 1);
@@ -312,7 +326,7 @@ class InstrumentationVisitor final : public VNVisitor {
     void visit(AstModule* nodep) {
         m_current_module = nodep;
         m_outputChanged = false;
-        if(nodep->name().substr(0, base_name.size()) == base_name) {
+        if(nodep->name().substr(0, base_name.size()) == base_name && nodep->dead() == false) {
             for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                 if(VN_IS(n->nextp(), AssignW)) {
                     // Adding Task
@@ -330,10 +344,9 @@ class InstrumentationVisitor final : public VNVisitor {
                     }
                     m_tmp_var = m_inst_var_clonetree;
                     m_tmp_var->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
+                    m_tmp_var->origName("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
                     m_tmp_var->trace(true);
-                    // Handling if the instrumented Variable is a port
-                    // Über die Direction kann vielleicht unabhängig vom Type geprüft werden ob es sich um eine Input oder Output variable handelt und dann der Change zur Var gemacht werden anstelle den Typ zu prüfen. So wird der Fehler umgangen, dass ein Input assigned wird und die fehlermeldung kommt
-                    if(m_inst_var_original->direction() == VDirection::INPUT/* m_inst_var_original->varType() == VVarType::PORT || m_inst_var_original->varType() == VVarType::WIRE*/) {
+                    if(m_inst_var_original->direction() == VDirection::INPUT || m_inst_var_original->direction() == VDirection::OUTPUT) {
                         m_tmp_var->varType(VVarType::VAR);
                         m_tmp_var->direction(VDirection::NONE);
                         m_tmp_var->lifetime(VLifetime::STATIC);
@@ -341,6 +354,11 @@ class InstrumentationVisitor final : public VNVisitor {
                         m_inst_var_clonetree = m_tmp_var->cloneTree(false); //Resetting the cloned Tree so that there is no issue with already in usage
                     } else {
                         m_inst_var_clonetree = m_tmp_var->cloneTree(false); //Resetting the cloned Tree so that there is no issue with already in usage
+                    }
+                    if(m_inst_var_original->direction() == VDirection::OUTPUT) {
+                        std::cout << m_tmp_var_port << std::endl;
+                        n->addNextHere(m_tmp_var_port);
+                        n->nextp();
                     }
                     n->addNextHere(m_tmp_var); 
                     n = n->nextp();
@@ -363,17 +381,21 @@ class InstrumentationVisitor final : public VNVisitor {
         m_taskrefp = nullptr;
     }
 
-    void visit(AstVar* nodep) { // Visitor ist dafür da die Variable zu nehmen und zu kopieren mit anhang und dann für die neu erstellten Variablen einzusetzen
+    void visit(AstVar* nodep) {
         AstVar* m_tmp_var_edit = nullptr;
-        if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll) /* && nodep->varType() == VVarType::VAR*/)  {
+        if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll))  {
             m_inst_var_original = nodep->cloneTree(false);
             m_inst_var_clonetree = nodep->cloneTree(false);
+            if(nodep->direction() == VDirection::OUTPUT) {
+                m_tmp_var_port = nodep->cloneTree(false);
+                m_tmp_var_port->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll)+"_port");
+            }
         }
         iterateChildren(nodep);
     }
 
     void visit(AstTask* nodep) {
-        if(nodep->name() == instrumentationManager.getInstrumentConfig("model", m_configIndexAll) && m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name) {
+        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name && m_current_module->dead() == false && nodep->name() == instrumentationManager.getInstrumentConfig("model", m_configIndexAll) ) {
             assert(m_inst_var_clonetree);
             AstVar* m_fi_id = nullptr;
             AstVar* m_var_x_task = nullptr;
@@ -388,6 +410,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
             m_var_x_task = m_inst_var_clonetree;
             m_var_x_task->name(instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
+            m_var_x_task->origName(instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
             m_var_x_task->varType(VVarType::PORT);
             m_var_x_task->direction(VDirection::INPUT);
             m_var_x_task->funcLocal(true);
@@ -396,6 +419,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
             m_tmp_var_task = m_inst_var_clonetree;
             m_tmp_var_task->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
+            m_tmp_var_task->origName("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
             m_tmp_var_task->varType(VVarType::PORT);
             m_tmp_var_task->direction(VDirection::OUTPUT);
             m_tmp_var_task->funcLocal(true);
@@ -410,7 +434,7 @@ class InstrumentationVisitor final : public VNVisitor {
     }
 
     void visit (AstAlways* nodep) {
-        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name){
+        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name && m_current_module->dead() == false){
             assert(m_alwaysp);
             if(nodep == m_alwaysp) {
                 AstBegin* m_newBegin = nullptr;
@@ -428,7 +452,7 @@ class InstrumentationVisitor final : public VNVisitor {
     }
 
     void visit(AstTaskRef* nodep) {
-        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name) {
+        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name && m_current_module->dead() == false) {
             if(m_taskrefp) {
                 AstConst* m_constp_id = nullptr;
 
@@ -446,31 +470,50 @@ class InstrumentationVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
 
-    // 28.01.25: ÜBERPRÜFEN OB DIESER KOMMENTAR NOCH AKTUELL IST!
-    // Dieses ganze VarRef Visitor design passt noch nicht. Was wenn assigns nicht in angenommener reihenfolge passiert? 
-    // Alle Variablen die mit count_reg und RV gemarked sind und nicht von uns erstellt sind, sollen relinked werden mit der neuen tmp_reg_count variable.
+    void visit(AstAssignW* nodep) {
+        if(m_current_module != NULL && m_current_module->dead() == false && m_current_module->name().substr(0, base_name.size()) == base_name && !m_newAssignWAdded && m_inst_var_original != NULL && m_inst_var_original->direction() == VDirection::OUTPUT) {
+            for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                if(VN_IS(n, VarRef) && VN_AS(n, VarRef)->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
+                    VN_CAST(n, VarRef)->setInstrumented(true);
+                    break;
+                }
+            }
+            AstVarRef* m_var_ref_port = new AstVarRef(nodep->fileline(), m_tmp_var_port, VAccess::WRITE);
+            AstVarRef* m_var_ref = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
+            m_var_ref_port->setInstrumented(true);
+            m_var_ref->setInstrumented(true);
+            
+            AstAssignW* m_instAssignW = new AstAssignW(nodep->fileline(), m_var_ref_port, m_var_ref, nullptr);
+            m_current_module->addStmtsp(m_instAssignW);
+            m_newAssignWAdded = true;
+        }
+        iterateChildren(nodep);
+    }
+
     void visit(AstVarRef* nodep) {
         AstVarRef* m_changed_varrefp = nullptr;
-        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name){
-            if(m_inst_var_original != NULL && m_inst_var_original->direction() == VDirection::OUTPUT && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
+        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name && m_current_module->dead() == false){
+            if(m_inst_var_original != NULL && m_inst_var_original->direction() == VDirection::OUTPUT && !(nodep->isInstrumented()) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll) && nodep->isInstrumented() == false) {
                 if(nodep->access() == VAccess::WRITE) {
                     if(m_previous_varrefp->backp()->type() != VNType::atSelBit){
-                        m_changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::WRITE);
+                        m_changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var_port, VAccess::WRITE);
                         nodep->replaceWith(m_changed_varrefp);
                         m_previous_varrefp = nodep;
                         m_outputChanged = true;
                     } else {
-                        m_changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
-                        m_previous_varrefp->backp()->replaceWith(m_changed_varrefp);// Eventuelle Abhängigkeit von Struktur kann zu Problemen führen
-                        m_previous_varrefp = nodep;// Eventuelle Abhängigkeit von Struktur kann zu Problemen führen
+                        m_changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var_port, VAccess::READ);
+                        m_previous_varrefp->backp()->replaceWith(m_changed_varrefp);
+                        m_previous_varrefp = nodep;
+                        m_outputChanged = true;
                     }
                 } else if(m_outputChanged && nodep->access() == VAccess::READ) {
-                    m_changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
+                    m_changed_varrefp = nodep->cloneTree(false);
+                    m_changed_varrefp->varp(m_tmp_var_port);
                     nodep->replaceWith(m_changed_varrefp);
                     m_previous_varrefp = nodep;
                 }
-            } else if(m_inst_var_original != NULL && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {                                                                                                                                                    // This && statement enables only the count_reg wire to be instrumented therefore the counter is injected instead of the output only 
-                if(nodep != m_added_varrefp && nodep->access() == VAccess::READ){// && nodep->backp()->type() != VNType::atAssignW) { // das sollte aktuell aber nur für den Counter funktionieren, da hier das signal wieder in das erste "richtige" always eingefügt wird, wenn das nicht passiert kann ides übeprüfung zu einem fehler führen!
+            } else if(m_inst_var_original != NULL && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
+                if(nodep != m_added_varrefp && nodep->access() == VAccess::READ){
                     m_changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
                     nodep->replaceWith(m_changed_varrefp);
                     m_previous_varrefp = nodep;

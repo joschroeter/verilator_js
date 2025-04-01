@@ -5722,6 +5722,7 @@ public:
 // === AstNodeVarRef ===
 class AstVarRef final : public AstNodeVarRef {
     // A reference to a variable (lvalue or rvalue)
+    bool m_instrumented : 1;
 public:
     // This form only allowed post-link because output/wire compression may
     // lead to deletion of AstVar's
@@ -5742,6 +5743,8 @@ public:
     string emitVerilog() override { V3ERROR_NA_RETURN(""); }
     string emitC() override { V3ERROR_NA_RETURN(""); }
     bool cleanOut() const override { return true; }
+    bool isInstrumented() { return m_instrumented; }
+    void setInstrumented(bool flag) { m_instrumented = flag; }
 };
 class AstVarXRef final : public AstNodeVarRef {
     // A VarRef to something in another module before AstScope.

@@ -15,17 +15,17 @@ unsigned long long main_time = 0;
 double sc_time_stamp() { return (double)main_time; }
 
 int main(int argc, char** argv) {
-	Verilated::debug(0);
-	Verilated::commandArgs(argc, argv);
+    Verilated::debug(0);
+    Verilated::commandArgs(argc, argv);
 
-	std::unique_ptr<VM_PREFIX> top{new VM_PREFIX{"top"}};
+    std::unique_ptr<VM_PREFIX> top{new VM_PREFIX{"top"}};
 
-	while (main_time <= 100) {
-		top->eval();
-		++main_time;
-	}
-	top->final();
-	top.reset();
-	printf("*-* All Finished *-*\n");
-	return 0;
+    while (main_time <= 100) {
+        top->eval();
+        ++main_time;
+    }
+    top->final();
+    top.reset();
+    printf("*-* All Finished *-*\n");
+    return 0;
 }

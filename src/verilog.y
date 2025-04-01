@@ -7653,9 +7653,9 @@ vltItem:
         |       vltInlineFront vltDModuleE vltDFTaskE
                         { V3Config::addInline($<fl>1, *$2, *$3, $1); }
         |       yVLT_INSTRUMENT yVLT_D_MODEL yaSTRING yVLT_D_ID yaSTRING yVLT_D_TARGET yaSTRING
-                        {       
+                        {
 
-                                try { int number = std::stoi(*$5); } 
+                                try { int number = std::stoi(*$5); }
                                 catch (const std::invalid_argument&) {
                                     $1->v3error("Error: Fault is not a integer.\n");
                                 }

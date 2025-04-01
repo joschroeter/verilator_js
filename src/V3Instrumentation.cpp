@@ -1,12 +1,12 @@
 // -*- mode: C++; c-file-style: "cc-mode" -*-
 //*************************************************************************
-// DESCRIPTION: Verilator: 
+// DESCRIPTION: Verilator:
 //
 // Code available from: https://verilator.org
 //
 //*************************************************************************
 //
-// Copyright 2003-2024 by Wilson Snyder. This program is free software; you
+// Copyright 2003-2025 by Wilson Snyder. This program is free software; you
 // can redistribute it and/or modify it under the terms of either the GNU
 // Lesser General Public License Version 3 or the Perl Artistic License
 // Version 2.0.
@@ -36,7 +36,7 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 
 //##################################################################################
 // Instrumentation class functions
-class InstrumentationManager {
+class InstrumentationManager final {
     private:
     struct InstrumentationConfig
     {
@@ -47,10 +47,10 @@ class InstrumentationManager {
         std::string var;
 
         bool hasData() const {
-            return false; 
+            return false;
         }
     };
-    
+
     std::vector<InstrumentationConfig> configs;
     std::vector<InstrumentationConfig> handledConfigs;
 
@@ -89,7 +89,7 @@ class InstrumentationManager {
         }
 
         const auto& handledConfig = handledConfigs[m_configIndex];
-        std::stringstream handledconfigData; 
+        std::stringstream handledconfigData;
 
         if (configType == "model") {
             handledconfigData << handledConfig.model;
@@ -114,7 +114,7 @@ class InstrumentationManager {
         }
 
         const auto& config = configs[m_configIndex];
-        std::stringstream configData; 
+        std::stringstream configData;
 
         if (configType == "model") {
             configData << config.model;
@@ -236,7 +236,7 @@ AstVarRef* getvarrefp(AstNode* nodep, string node_name) {
     void visit(AstNetlist* nodep) {
         if(!m_instDone) {
             for(AstNode* n=nodep->op1p(); n; n = n->nextp()) {
-                if(n->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexFix)+"__fiinst__"+std::to_string(m_configIndexFix+1)) {
+                if(n->name().substr(0, base_name.size()) == base_name) {
                     m_fiinstr_module = VN_AS(n, Module);
                     break;
                 }
@@ -360,12 +360,12 @@ class InstrumentationVisitor final : public VNVisitor {
                         n->addNextHere(m_tmp_var_port);
                         n->nextp();
                     }
-                    n->addNextHere(m_tmp_var); 
+                    n->addNextHere(m_tmp_var);
                     n = n->nextp();
 
                     // Adding Always
-                    AstTaskRef* m_taskrefp = new AstTaskRef(nodep->fileline(), instrumentationManager.getInstrumentConfig("model", m_configIndexAll), 
-                                                            new AstArg(nodep->fileline(), "tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll), 
+                    AstTaskRef* m_taskrefp = new AstTaskRef(nodep->fileline(), instrumentationManager.getInstrumentConfig("model", m_configIndexAll),
+                                                            new AstArg(nodep->fileline(), "tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll),
                                                                         new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::WRITE)));
                     m_taskrefp->taskp(m_taskp);
                     m_alwaysp = new AstAlways(n->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr);
@@ -374,8 +374,8 @@ class InstrumentationVisitor final : public VNVisitor {
                     break;
                 }
             }
-        }                                                         
-        iterateChildren(nodep); 
+        }
+        iterateChildren(nodep);
         m_current_module = nullptr;
         m_alwaysp = nullptr;
         m_taskrefp = nullptr;
@@ -383,7 +383,7 @@ class InstrumentationVisitor final : public VNVisitor {
 
     void visit(AstVar* nodep) {
         AstVar* m_tmp_var_edit = nullptr;
-        if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll))  {
+        if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
             m_inst_var_original = nodep->cloneTree(false);
             m_inst_var_clonetree = nodep->cloneTree(false);
             if(nodep->direction() == VDirection::OUTPUT) {
@@ -395,14 +395,14 @@ class InstrumentationVisitor final : public VNVisitor {
     }
 
     void visit(AstTask* nodep) {
-        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name && m_current_module->dead() == false && nodep->name() == instrumentationManager.getInstrumentConfig("model", m_configIndexAll) ) {
+        if(m_current_module != NULL && m_current_module->name().substr(0, base_name.size()) == base_name && m_current_module->dead() == false && nodep->name() == instrumentationManager.getInstrumentConfig("model", m_configIndexAll)) {
             assert(m_inst_var_clonetree);
             AstVar* m_fi_id = nullptr;
             AstVar* m_var_x_task = nullptr;
             AstVar* m_tmp_var_task = nullptr;
             FileLine* const fl = nodep->fileline();
 
-            m_fi_id = new AstVar(fl, VVarType::PORT, "id", VFlagChildDType{}, 
+            m_fi_id = new AstVar(fl, VVarType::PORT, "id", VFlagChildDType{},
                                     new AstBasicDType(fl, VBasicDTypeKwd::INT, VSigning::SIGNED, 32, 0));
             m_fi_id->direction(VDirection::INPUT);
             m_fi_id->funcLocal(true);
@@ -424,7 +424,7 @@ class InstrumentationVisitor final : public VNVisitor {
             m_tmp_var_task->direction(VDirection::OUTPUT);
             m_tmp_var_task->funcLocal(true);
             m_tmp_var_task->lifetime(VLifetime::AUTOMATIC);
-            m_inst_var_clonetree = m_inst_var_original->cloneTree(false); 
+            m_inst_var_clonetree = m_inst_var_original->cloneTree(false);
 
             nodep->addStmtsp(m_fi_id);
             nodep->addStmtsp(m_var_x_task);
@@ -443,7 +443,7 @@ class InstrumentationVisitor final : public VNVisitor {
                 m_taskrefp->taskp(getTaskp(nodep, m_configIndexAll));
 
                 m_newBegin = new AstBegin(nodep->fileline(), "",
-                                new AstStmtExpr(nodep->fileline(), m_taskrefp), 
+                                new AstStmtExpr(nodep->fileline(), m_taskrefp),
                                 false, false);
                 nodep->addStmtsp(m_newBegin);
             }
@@ -456,14 +456,14 @@ class InstrumentationVisitor final : public VNVisitor {
             if(m_taskrefp) {
                 AstConst* m_constp_id = nullptr;
 
-                m_constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{}, std::stoi(instrumentationManager.getInstrumentConfig("id", m_configIndexAll))); 
+                m_constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{}, std::stoi(instrumentationManager.getInstrumentConfig("id", m_configIndexAll)));
                 m_constp_id->dtypeChgSigned();
 
                 m_added_varrefp = new AstVarRef(nodep->fileline(), getVarp(nodep, instrumentationManager.getInstrumentConfig("var", m_configIndexAll)), VAccess::READ);
 
                 nodep->addPinsp(new AstArg(nodep->fileline(), "", m_constp_id));
                 nodep->addPinsp(new AstArg(nodep->fileline(), "", m_added_varrefp));
-                nodep->addPinsp(new AstArg(nodep->fileline(), "", 
+                nodep->addPinsp(new AstArg(nodep->fileline(), "",
                             new AstVarRef(nodep->fileline(), getVarp(nodep, "tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll)), VAccess::WRITE)));
             }
         }
@@ -482,7 +482,7 @@ class InstrumentationVisitor final : public VNVisitor {
             AstVarRef* m_var_ref = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
             m_var_ref_port->setInstrumented(true);
             m_var_ref->setInstrumented(true);
-            
+
             AstAssignW* m_instAssignW = new AstAssignW(nodep->fileline(), m_var_ref_port, m_var_ref, nullptr);
             m_current_module->addStmtsp(m_instAssignW);
             m_newAssignWAdded = true;

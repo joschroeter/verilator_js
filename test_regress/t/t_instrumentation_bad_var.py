@@ -9,10 +9,9 @@
 
 import vltest_bootstrap
 
-test.scenarios('simulator')
+test.scenarios('linter')
+test.top_filename = "t/t_instrumentation.v"
 
-test.compile(make_top_shell=False, make_main=False, v_flags2=["--trace --exe", test.pli_filename, test.name + ".vlt"])
-
-test.execute()
+test.lint(v_flags2=["t_instrumentation_bad_var.vlt"], fails=True, expect_filename=test.golden_filename)
 
 test.passes()

@@ -153,7 +153,7 @@ static void process() {
         if(!V3Instrumentation::checkInstrumentationData()) {
             for(size_t configIndexDup = 0; configIndexDup <= V3Instrumentation::getInstrumentationAmount()-1; configIndexDup++) {
                 if(V3Instrumentation::checkForExistingInstrumentation(configIndexDup) != -1) {
-                   std::cout << "INFORMATION: Instrumentation of the same module and instance! Therefore not adding a parameter to the module and cell!" << std::endl; 
+                   std::cout << "INFORMATION: Instrumentation of the same module and instance! Therefore not adding a parameter to the module and cell!" << std::endl;
                 } else {
                     std::cout << "INFORMATION: Instrumentation of a new module and instance! Therefore adding a parameter to the module and cell!" << std::endl;
                     V3Instrumentation::instrumentationModuleDup(v3Global.rootp(), configIndexDup);
@@ -164,7 +164,7 @@ static void process() {
             // Fixen der links von instance zu passendem modul, damit Modules nicht als [Dead] markiert werden
             for(size_t configIndexFix = 0; configIndexFix <= V3Instrumentation::getInstrumentationAmount()-1; configIndexFix++) {
                 if(V3Instrumentation::checkForExistingInstrumentation(configIndexFix) != -1) {
-                   std::cout << "INFORMATION: Instrumentation of the same module! Therefore not need to fix module link again!" << std::endl; 
+                   std::cout << "INFORMATION: Instrumentation of the same module! Therefore not need to fix module link again!" << std::endl;
                 } else {
                     std::cout << "INFORMATION: Instrumentation of a new module! Therefore fixing module link!" << std::endl;
                     V3Instrumentation::instrumentationFix(v3Global.rootp(), configIndexFix, configIndexFix, false);
@@ -205,13 +205,13 @@ static void process() {
         V3LinkDot::linkDotParamed(v3Global.rootp());  // Cleanup as made new modules
         V3LinkLValue::linkLValue(v3Global.rootp());  // Resolve new VarRefs
         V3Error::abortIfErrors();
-        
+
         // Test for Instrumentation of Fault Injection
         if (!V3Instrumentation::checkInstrumentationData()) {
             v3Global.dpi(true);
             for(size_t configIndexAll = 0; configIndexAll <= V3Instrumentation::getInstrumentationAmount()-1; configIndexAll++) {
                 if(V3Instrumentation::checkForExistingInstrumentation(configIndexAll) != -1) {
-                   std::cout << "INFORMATION: Instrumentation of the same module and instance! Therefore taking the first config as search for Namingconvetion!" << std::endl; 
+                   std::cout << "INFORMATION: Instrumentation of the same module and instance! Therefore taking the first config as search for Namingconvetion!" << std::endl;
                    size_t namingIndex = V3Instrumentation::checkForExistingInstrumentation(configIndexAll);
                    V3Instrumentation::instrumentationAll(v3Global.rootp(), configIndexAll, namingIndex);
                 } else {

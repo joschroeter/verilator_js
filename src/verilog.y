@@ -7668,12 +7668,12 @@ vltItem:
 
                                 if (first_dot != std::string::npos & second_dot != std::string::npos) {
                                     // Extract the instance, module, and var from the target string
-                                    std::string module = target.substr(0, first_dot);            // Substring before the first dot
-                                    std::string instance = target.substr(first_dot + 1, second_dot - first_dot - 1);  // Between the dots
+                                    std::string instance = target.substr(0, first_dot);            // Substring before the first dot
+                                    std::string module = target.substr(first_dot + 1, second_dot - first_dot - 1);  // Between the dots
                                     std::string var = target.substr(second_dot + 1);  // After the second dot
 
                                     // Call addInstrument with the split components
-                                    V3Config::addInstrument($<fl>1, *$3, *$5, instance, module, var);
+                                    V3Config::addInstrument($<fl>1, *$3, *$5, module, instance, var);
                                 } else {
                                     // Handle the error if the format is incorrect
                                     $1->v3error("Error: One of the TARGET strings in the .vlt file does not have the the correct format.\n Please verify the format follows the following convention:\n INSTANCE.MODULE.TARGET_VARIABLE\n");

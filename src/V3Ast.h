@@ -2189,7 +2189,7 @@ public:
         this->v3fatalSrc("name() called on object without name() method");
     }
     virtual void setOrigName(const string& name) {
-        this->v3fatalSrc("origName() called on object without origName() method");
+        this->v3fatalSrc("setOrigName() called on object without setOrigName() method");
     }
     virtual void tag(const string& text) {}
     virtual string tag() const { return ""; }

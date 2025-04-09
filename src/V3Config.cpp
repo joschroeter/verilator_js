@@ -18,8 +18,6 @@
 
 #include "V3Config.h"
 
-#include "V3Instrumentation.h"
-
 #include "V3String.h"
 
 #include <memory>
@@ -534,6 +532,13 @@ public:
 //######################################################################
 // Resolve modules and files in the design
 
+struct InstrumentationTarget { // Define InstrumentationTarget outside the class
+    int m_faultcase;
+    string m_instrumentationfunc;
+    AstNode* m_varp;
+    AstNode* m_modulep;
+    AstCell * m_cellp;
+};
 class V3ConfigResolver final {
     enum ProfileDataMode : uint8_t { NONE = 0, MTASK = 1, HIER_DPI = 2 };
     V3ConfigModuleResolver m_modules;  // Access to module names (with wildcards)
@@ -543,8 +548,24 @@ class V3ConfigResolver final {
         m_profileData;  // Access to profile_data records
     uint8_t m_mode = NONE;
     std::unordered_map<string, int> m_hierWorkers;
+    std::unordered_map<string, InstrumentationTarget> m_instrumentationConfigs;
     FileLine* m_hierWorkersFileLine = nullptr;
     FileLine* m_profileFileLine = nullptr;
+
+    // Find the instrumentation target by prefix
+    const std::unordered_map<string, InstrumentationTarget>::iterator
+    findByPrefix(const std::string& target) {
+        for (auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it)
+        {
+            const std::string& key = it->first;
+
+            if (target.compare(0, key.length(), key) == 0 &&
+                (target.length() == key.length() || target[key.length()] == '.')) {
+                return it;
+            }
+        }
+        return m_instrumentationConfigs.end();
+    }
 
     V3ConfigResolver() = default;
     ~V3ConfigResolver() = default;
@@ -592,6 +613,44 @@ public:
         return it->second;
     }
     FileLine* getProfileDataFileLine() const { return m_profileFileLine; }  // Maybe null
+    // Add the instrumentation config data to the map to create the initial map (Used in verilog.y)
+    void addInstrumentationConfigs(FileLine* fl, const string& instFunction, int faultcase,
+                                   const string& target) {
+        m_instrumentationConfigs[target] = InstrumentationTarget{faultcase, instFunction};
+    }
+    // Add the targeted var nodes to the corresponding data field in the map
+    void addInstrumentationConfigs(AstVar* varp, const string& target) {
+        auto it = m_instrumentationConfigs.find(target);
+        if (it != m_instrumentationConfigs.end()) {
+            it->second.m_varp = varp;
+        } else {
+            v3error("Instrumentation target not found! ... Note: " << target);
+        }
+    }
+    // Add the module nodes to the corresponding data field in the map if the target prefix exists
+    void addInstrumentationConfigs(AstModule* modulep, const string& target) {
+        auto it = findByPrefix(target);
+        if (it != m_instrumentationConfigs.end()) {
+            it->second.m_modulep = modulep;
+        } else {
+            v3error("Instrumentation target not found! ... Note: " << target);
+        }
+    }
+    // Add the cell nodes to the corresponding data field in the map if the target prefix exists
+    void addInstrumentationConfigs(AstCell* cellp, const string& target) {
+        auto it = findByPrefix(target);
+        if (it != m_instrumentationConfigs.end()) {
+            it->second.m_cellp = cellp;
+        } else {
+            v3error("Instrumentation target not found! ... Note: " << target);
+        }
+    }
+    bool getInstrumentationConfigs(string nodepHierarchy) {
+        if(m_instrumentationConfigs.find(nodepHierarchy) != m_instrumentationConfigs.end()) {
+            return true;
+        }
+        return false;
+    }
 };
 
 //######################################################################
@@ -646,9 +705,22 @@ void V3Config::addInline(FileLine* fl, const string& module, const string& ftask
     }
 }
 
-void V3Config::addInstrument(FileLine* fl, const string& imodel, const string& iid, const string& imodule, const string& iinstance, const string& ivar) {
-    // Add logic to store the variables with the coresponding descripton
-    V3Instrumentation::storeInstrumentationData(imodel, iid, imodule, iinstance, ivar);
+void V3Config::addInstrumentationConfigs(FileLine *fl, const string& instrumentationfunc,
+                                         int faultcase, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, faultcase,
+                                                    target);
+}
+
+void V3Config::addInstrumentationConfigs(AstVar* varp, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(varp, target);
+}
+
+void V3Config::addInstrumentationConfigs(AstModule* modulep, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(modulep, target);
+}
+
+void V3Config::addInstrumentationConfigs(AstCell* cellp, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(cellp, target);
 }
 
 void V3Config::addModulePragma(const string& module, VPragmaType pragma) {

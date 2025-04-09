@@ -7652,33 +7652,8 @@ vltItem:
                         { V3Config::addVarAttr($<fl>1, *$2, *$3, *$4, $1, $5); }
         |       vltInlineFront vltDModuleE vltDFTaskE
                         { V3Config::addInline($<fl>1, *$2, *$3, $1); }
-        |       yVLT_INSTRUMENT yVLT_D_MODEL yaSTRING yVLT_D_ID yaSTRING yVLT_D_TARGET yaSTRING
-                        {
-
-                                try { int number = std::stoi(*$5); }
-                                catch (const std::invalid_argument&) {
-                                    $1->v3error("Error: Fault is not a integer.\n");
-                                }
-
-                                // Get the target string (assuming it's in the format "instance.module.var")
-                                std::string target = *$7;
-                                // Find the positions of the periods in the target string
-                                size_t first_dot = target.find('.');
-                                size_t second_dot = target.find('.', first_dot + 1);
-
-                                if (first_dot != std::string::npos & second_dot != std::string::npos) {
-                                    // Extract the instance, module, and var from the target string
-                                    std::string instance = target.substr(0, first_dot);            // Substring before the first dot
-                                    std::string module = target.substr(first_dot + 1, second_dot - first_dot - 1);  // Between the dots
-                                    std::string var = target.substr(second_dot + 1);  // After the second dot
-
-                                    // Call addInstrument with the split components
-                                    V3Config::addInstrument($<fl>1, *$3, *$5, module, instance, var);
-                                } else {
-                                    // Handle the error if the format is incorrect
-                                    $1->v3error("Error: One of the TARGET strings in the .vlt file does not have the the correct format.\n Please verify the format follows the following convention:\n INSTANCE.MODULE.TARGET_VARIABLE\n");
-                                }
-                        }
+        |       yVLT_INSTRUMENT yVLT_D_MODEL yaSTRING yVLT_D_ID yaINTNUM yVLT_D_TARGET yaSTRING
+                        { V3Config::addInstrumentationConfigs($<fl>1, *$3, $5->toSInt(), *$7); }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile
                         { V3Config::addCoverageBlockOff(*$2, 0); }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile yVLT_D_LINES yaINTNUM

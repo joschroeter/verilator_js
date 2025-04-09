@@ -149,7 +149,12 @@ static void process() {
             std::exit(0);
         }
 
+        if(v3Global.opt.instrument()) {
+            V3Instrumentation::findTargets(v3Global.rootp());
+        }
+
         // Improved Duplication check
+        /*
         if(!V3Instrumentation::checkInstrumentationData()) {
             for(size_t configIndexDup = 0; configIndexDup <= V3Instrumentation::getInstrumentationAmount()-1; configIndexDup++) {
                 if(V3Instrumentation::checkForExistingInstrumentation(configIndexDup) == -1) {
@@ -166,6 +171,7 @@ static void process() {
             }
             V3Instrumentation::cleanHandledInstrumentation();
         }
+        */
 
         // Convert parseref's to varrefs, and other directly post parsing fixups
         V3LinkParse::linkParse(v3Global.rootp());
@@ -201,6 +207,7 @@ static void process() {
         V3Error::abortIfErrors();
 
         // Test for Instrumentation of Fault Injection
+        /*
         if (!V3Instrumentation::checkInstrumentationData()) {
             v3Global.dpi(true);
             for(size_t configIndexAll = 0; configIndexAll <= V3Instrumentation::getInstrumentationAmount()-1; configIndexAll++) {
@@ -213,11 +220,13 @@ static void process() {
             }
             V3Instrumentation::cleanHandledInstrumentation;
         }
+        */
 
         // Remove any modules that were parameterized and are no longer referenced.
         V3Dead::deadifyModules(v3Global.rootp());
         v3Global.checkTree();
 
+        /*
         if(!V3Instrumentation::checkInstrumentationData()) {
             v3Global.dpi(true);
             size_t namingIndex;
@@ -231,6 +240,7 @@ static void process() {
             }
             V3Instrumentation::cleanHandledInstrumentation();
         }
+        */
 
         // Create a hierarchical Verilation plan
         if (!v3Global.opt.lintOnly() && !v3Global.opt.serializeOnly()

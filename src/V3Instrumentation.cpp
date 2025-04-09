@@ -25,6 +25,7 @@
 
 #include "V3File.h"
 #include "V3Instrumentation.h"
+#include "V3Config.h"
 
 #include <iostream>
 #include <regex>
@@ -35,7 +36,46 @@
 VL_DEFINE_DEBUG_FUNCTIONS;
 
 //##################################################################################
+// Instrumentation class finder
+class InstrumentationTargetFinder final : public VNVisitor {
+// METHODS
+//----------------------------------------------------------------------------------
+// General function for adding instrumentation configs with type casting
+template <typename targetType, typename nodeType>
+void addInstrumentation(AstNode* nodep) {
+    auto castedNode = AstNode::privateCast<targetType, nodeType>(nodep)->cloneTree(false);
+    V3Config::addInstrumentationConfigs(castedNode, nodep->hierarchyPath());
+}
+
+// VISITORS
+//----------------------------------------------------------------------------------
+void visit(AstModule* nodep) {
+    // Visit all modules and add instrumentation
+    addInstrumentation<AstModule, AstNode>(nodep);
+}
+
+void visit(AstCell* nodep) {
+    // Visit all cells and add instrumentation
+    addInstrumentation<AstCell, AstNode>(nodep);
+}
+
+void visit(AstVar* nodep) {
+    // Visit all vars and add instrumentation
+    addInstrumentation<AstVar, AstNode>(nodep);
+}
+
+void visit(AstNode* nodep) override { iterateChildren(nodep); }
+
+public:
+    // CONSTRUCTOR
+    //-------------------------------------------------------------------------------
+    InstrumentationTargetFinder(AstNetlist* nodep) {};
+    ~InstrumentationTargetFinder() override = default;
+};
+
+//##################################################################################
 // Instrumentation class functions
+
 class InstrumentationManager final {
     private:
     struct InstrumentationConfig
@@ -318,6 +358,7 @@ class InstrumentationVisitor final : public VNVisitor {
     void visit(AstModule* nodep) {
         m_current_module = nodep;
         m_outputChanged = false;
+        //V3Config::getInstrumentationConfigs();
         if(nodep->name().substr(0, m_base_name.size()) == m_base_name && nodep->dead() == false) {
             for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                 if(VN_IS(n->nextp(), AssignW)) {
@@ -376,6 +417,7 @@ class InstrumentationVisitor final : public VNVisitor {
         if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
             m_inst_var_original = nodep->cloneTree(false);
             m_inst_var_clonetree = nodep->cloneTree(false);
+            std::cout << "Instance string: " << nodep->hierarchyPath() << std::endl;
             if(nodep->direction() == VDirection::OUTPUT) {
                 m_tmp_var_port = nodep->cloneTree(false);
                 m_tmp_var_port->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll)+"_port");
@@ -542,43 +584,8 @@ void V3Instrumentation::instrumentationFix(AstNetlist* nodep, size_t configIndex
     V3Global::dumpCheckGlobalTree("instrumentationFix", 0, dumpTreeEitherLevel() >= 3);
 }
 
-bool V3Instrumentation::checkInstrumentationData() {
-    return instrumentationManager.existingInstrumentConfig();
-}
-
-size_t V3Instrumentation::getInstrumentationAmount() {
-    return instrumentationManager.getInstrumentationAmount();
-}
-
-std::string V3Instrumentation::cmpCurrent2NextInstrumentation(std::string position, std::string configType, size_t indexParam) {
-    std::string cmpInstrumentation = "";
-
-    try
-    {
-        if(position == "current") {
-            cmpInstrumentation = instrumentationManager.getInstrumentConfig(configType, indexParam);
-        } else if(position == "previous") {
-            cmpInstrumentation = (indexParam > 0) ? instrumentationManager.getInstrumentConfig(configType, indexParam-1) : "";
-        } else {
-        throw std::runtime_error("ERROR: Unknown position! (" + position + ")");
-        }
-    }
-    catch(const std::runtime_error& e)
-    {
-        std::cerr << e.what() << endl;
-    }
-
-    return cmpInstrumentation;
-}
-
-int V3Instrumentation::checkForExistingInstrumentation(size_t indexParam) {
-    return instrumentationManager.checkForDuplicate(indexParam);
-}
-
-void V3Instrumentation::storeInstrumentationData(const std::string& model, const std::string& id, const std::string& module, const std::string& instance, const std::string& var) {
-    instrumentationManager.storeInstrumentConfig(model, id, module, instance, var);
-}
-
-void V3Instrumentation::cleanHandledInstrumentation() {
-    instrumentationManager.cleanHandledConfig();
+void V3Instrumentation::findTargets(AstNetlist* nodep) {
+    UINFO(2, __FUNCTION__ << ": " << endl);
+    { InstrumentationTargetFinder{nodep}; }
+    V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
 }

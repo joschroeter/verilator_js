@@ -145,6 +145,19 @@ string AstNode::shortName() const {
     return pretty;
 }
 
+string AstNode::hierarchyPath() const {
+    constexpr unsigned maxIterations = 10000;
+    unsigned iterCount = 0;
+    for(const AstNode* backp = this; backp; backp = backp->backp(), ++iterCount) {
+        if (VL_UNCOVERABLE(iterCount >= maxIterations)) return "";
+        if (const AstModule* const modp = VN_CAST(backp, Module)) {
+            const string instanceName = modp->someInstanceName();
+            return instanceName.empty() ? "" : instanceName + "." + this->name();
+        }
+    }
+    return "";
+}
+
 string AstNode::dedotName(const string& namein) {
     string pretty = namein;
     string::size_type pos;

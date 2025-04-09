@@ -2197,6 +2197,7 @@ public:
     string nameProtect() const VL_MT_STABLE;  // Name with --protect-id applied
     string origNameProtect() const;  // origName with --protect-id applied
     string shortName() const;  // Name with __PVT__ removed for concatenating scopes
+    string hierarchyPath() const; // Return the full path to this variable
     static string dedotName(const string& namein);  // Name with dots removed
     static string prettyName(const string& namein) VL_PURE;  // Name for printing out to the user
     static string vpiName(const string& namein);  // Name for vpi access

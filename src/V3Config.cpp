@@ -535,9 +535,12 @@ public:
 struct InstrumentationTarget { // Define InstrumentationTarget outside the class
     int m_faultcase;
     string m_instrumentationfunc;
-    AstNode* m_varp;
-    AstNode* m_modulep;
+    AstVar* m_varp;
+    AstVar* m_instVarp;
+    AstModule* m_modulep;
+    AstModule* m_instModulep;
     AstCell * m_cellp;
+    AstAssignW* m_assignp;
 };
 class V3ConfigResolver final {
     enum ProfileDataMode : uint8_t { NONE = 0, MTASK = 1, HIER_DPI = 2 };
@@ -548,24 +551,9 @@ class V3ConfigResolver final {
         m_profileData;  // Access to profile_data records
     uint8_t m_mode = NONE;
     std::unordered_map<string, int> m_hierWorkers;
-    std::unordered_map<string, InstrumentationTarget> m_instrumentationConfigs;
     FileLine* m_hierWorkersFileLine = nullptr;
     FileLine* m_profileFileLine = nullptr;
-
-    // Find the instrumentation target by prefix
-    const std::unordered_map<string, InstrumentationTarget>::iterator
-    findByPrefix(const std::string& target) {
-        for (auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it)
-        {
-            const std::string& key = it->first;
-
-            if (target.compare(0, key.length(), key) == 0 &&
-                (target.length() == key.length() || target[key.length()] == '.')) {
-                return it;
-            }
-        }
-        return m_instrumentationConfigs.end();
-    }
+    public: std::unordered_map<string, InstrumentationTarget> m_instrumentationConfigs;
 
     V3ConfigResolver() = default;
     ~V3ConfigResolver() = default;
@@ -619,35 +607,110 @@ public:
         m_instrumentationConfigs[target] = InstrumentationTarget{faultcase, instFunction};
     }
     // Add the targeted var nodes to the corresponding data field in the map
-    void addInstrumentationConfigs(AstVar* varp, const string& target) {
+    void addInstrumentationConfigs(AstVar* varp, AstVar* m_instVarp, const std::string& target) {
         auto it = m_instrumentationConfigs.find(target);
         if (it != m_instrumentationConfigs.end()) {
             it->second.m_varp = varp;
+            it->second.m_instVarp = m_instVarp;
         } else {
             v3error("Instrumentation target not found! ... Note: " << target);
         }
     }
     // Add the module nodes to the corresponding data field in the map if the target prefix exists
-    void addInstrumentationConfigs(AstModule* modulep, const string& target) {
-        auto it = findByPrefix(target);
-        if (it != m_instrumentationConfigs.end()) {
-            it->second.m_modulep = modulep;
-        } else {
-            v3error("Instrumentation target not found! ... Note: " << target);
+    void addInstrumentationConfigs(AstModule* modulep, AstModule* instModulep, const string& target) {
+        for(auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-1; ++i) {
+                reduced += "." + parts[i];
+            }
+
+            if(reduced == target) {
+                it->second.m_modulep = modulep;
+                it->second.m_instModulep = instModulep;
+            }
         }
     }
     // Add the cell nodes to the corresponding data field in the map if the target prefix exists
     void addInstrumentationConfigs(AstCell* cellp, const string& target) {
-        auto it = findByPrefix(target);
+        for(auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-2; ++i) {
+                reduced += "." + parts[i];
+            }
+            if(reduced == target) { it->second.m_cellp = cellp; };
+
+        }
+    }
+
+    void addInstrumentationConfigs(AstAssignW* assignp, const string& target) {
+        auto it = m_instrumentationConfigs.find(target);
         if (it != m_instrumentationConfigs.end()) {
-            it->second.m_cellp = cellp;
+            it->second.m_assignp = assignp;
         } else {
             v3error("Instrumentation target not found! ... Note: " << target);
         }
     }
-    bool getInstrumentationConfigs(string nodepHierarchy) {
-        if(m_instrumentationConfigs.find(nodepHierarchy) != m_instrumentationConfigs.end()) {
-            return true;
+
+    const std::unordered_map<string, InstrumentationTarget>::iterator
+    findByPrefix(const std::string& prefix) {
+        for (auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it)
+        {
+            const std::string& key = it->first;
+
+            if (key.compare(0, prefix.size(), prefix) == 0 &&
+                (key.size() == prefix.size() || key[prefix.size()] == '.')) {
+                return it;
+            }
+        }
+        return m_instrumentationConfigs.end();
+    }
+
+    std::vector<std::string> split(const std::string& str) {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream stream(str);
+        while (std::getline(stream, token, '.')) {
+            tokens.push_back(token);
+        }
+        return tokens;
+    }
+
+    bool hasFull(AstVar* varp, const std::string& name) {
+        return m_instrumentationConfigs.find(name) != m_instrumentationConfigs.end();
+    }
+
+    bool hasFull(AstModule* modulep, const std::string& name) {
+        for(auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-1; ++i) {
+                reduced += "." + parts[i];
+            }
+
+            return reduced == name;
+        }
+        return false;
+    }
+
+    bool hasFull(AstCell* cellp, const std::string& name) {
+        for(auto it = m_instrumentationConfigs.begin(); it != m_instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-2; ++i) {
+                reduced += "." + parts[i];
+            }
+
+            return reduced == name;
         }
         return false;
     }
@@ -711,16 +774,41 @@ void V3Config::addInstrumentationConfigs(FileLine *fl, const string& instrumenta
                                                     target);
 }
 
-void V3Config::addInstrumentationConfigs(AstVar* varp, const string& target) {
-    V3ConfigResolver::s().addInstrumentationConfigs(varp, target);
+void V3Config::addInstrumentationConfigs(AstVar* varp, AstVar* instVarp, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(varp, instVarp, target);
 }
 
-void V3Config::addInstrumentationConfigs(AstModule* modulep, const string& target) {
-    V3ConfigResolver::s().addInstrumentationConfigs(modulep, target);
+void V3Config::addInstrumentationConfigs(AstModule* modulep, AstModule* instModulep, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(modulep, instModulep, target);
 }
 
 void V3Config::addInstrumentationConfigs(AstCell* cellp, const string& target) {
     V3ConfigResolver::s().addInstrumentationConfigs(cellp, target);
+}
+
+void V3Config::addInstrumentationConfigs(AstAssignW* assignp, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(assignp, target);
+}
+
+bool V3Config::findByPrefix(const string& prefix) {
+    if(V3ConfigResolver::s().findByPrefix(prefix) !=
+        V3ConfigResolver::s().m_instrumentationConfigs.end()) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool V3Config::hasFullName(AstVar* nodep, const string& fullname) {
+    return V3ConfigResolver::s().hasFull(nodep, fullname);
+}
+
+bool V3Config::hasFullName(AstModule* nodep, const string& fullname) {
+    return V3ConfigResolver::s().hasFull(nodep, fullname);
+}
+
+bool V3Config::hasFullName(AstCell* nodep, const string& fullname) {
+    return V3ConfigResolver::s().hasFull(nodep, fullname);
 }
 
 void V3Config::addModulePragma(const string& module, VPragmaType pragma) {

@@ -148,9 +148,11 @@ static void process() {
             cout << "--debug-exit-parse: Exiting after parse\n";
             std::exit(0);
         }
-
         if(v3Global.opt.instrument()) {
+            cout << "Instrumenting the design...\n";
             V3Instrumentation::findTargets(v3Global.rootp());
+            cout << "Duplicating target modules ...\n";
+            V3Instrumentation::duplicateTargetModule(v3Global.rootp());
         }
 
         // Improved Duplication check

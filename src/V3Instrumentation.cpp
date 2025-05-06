@@ -30,7 +30,7 @@
 #include <iostream>
 #include <regex>
 #include <sstream>
-#include <string>
+#include <string> 
 #include <vector>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
@@ -38,43 +38,146 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 //##################################################################################
 // Instrumentation class finder
 class InstrumentationTargetFinder final : public VNVisitor {
-// METHODS
-//----------------------------------------------------------------------------------
-// General function for adding instrumentation configs with type casting
-template <typename targetType, typename nodeType>
-void addInstrumentation(AstNode* nodep) {
-    auto castedNode = AstNode::privateCast<targetType, nodeType>(nodep)->cloneTree(false);
-    V3Config::addInstrumentationConfigs(castedNode, nodep->hierarchyPath());
-}
+    string m_currentHierarchy;
+    string m_moduleHierarchy;
+    AstNodeModule* m_modp = nullptr;
+    AstNodeModule* m_finalModule = nullptr;
+    bool m_initialModule = false;
+    bool m_foundCell = false;
 
-// VISITORS
-//----------------------------------------------------------------------------------
-void visit(AstModule* nodep) {
-    // Visit all modules and add instrumentation
-    addInstrumentation<AstModule, AstNode>(nodep);
-}
+    // METHODS
+    //----------------------------------------------------------------------------------
 
-void visit(AstCell* nodep) {
-    // Visit all cells and add instrumentation
-    addInstrumentation<AstCell, AstNode>(nodep);
-}
+    // VISITORS
+    //----------------------------------------------------------------------------------
+    void visit(AstModule* nodep) {
+        // Visit all modules and add instrumentation
+        // Besuchen des Moduls, wenn der name des moduls in meinem target string vorkommt hinzufügen zu hirarchy string und weitergehen
+        if(!m_initialModule){
+            if(V3Config::findByPrefix(nodep->name())) {
+                m_currentHierarchy = nodep->name();
+                m_initialModule = true;
+                iterateChildren(nodep);
+            } else {
+                v3error("In .vlt file defined MODULE for TARGET could not be found! ... Note: " << nodep->name());
+            }
+        } else if (nodep == m_modp) {
+            if(V3Config::hasFullName(nodep, m_currentHierarchy + "." + nodep->name())) {
+                //Fuege den node der Map hinzu
+                m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
+                m_moduleHierarchy = m_currentHierarchy;
+                AstModule* modulep = nodep->cloneTree(false);
+                modulep->name(nodep->name() + "__inst");
+                V3Config::addInstrumentationConfigs(nodep, modulep, m_currentHierarchy);
+                m_finalModule = nodep;
+                iterateChildren(nodep);
+            } else {
+                m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
+                iterateChildren(nodep);
+            }
+            /*} else {
+                v3error("In .vlt file defined MODULE for TARGET could not be found! ... Note: " << nodep->name());
+            }*/
+        }
+        m_foundCell = false;
+    }
 
-void visit(AstVar* nodep) {
-    // Visit all vars and add instrumentation
-    addInstrumentation<AstVar, AstNode>(nodep);
-}
+    void visit(AstCell* nodep) {
+        // Visit each cell of a module and check if the name of the cell is in the target string
+        if(V3Config::findByPrefix(m_currentHierarchy + "." + nodep->name())) {
+            m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
+            m_foundCell = true;
+            m_modp = nodep->modp();
+            if (V3Config::hasFullName(nodep, m_currentHierarchy)) {
+                //Fuege den node der Map hinzu;
+                V3Config::addInstrumentationConfigs(nodep, m_currentHierarchy);
+            }
+        }
+        /*else if(!VN_IS(nodep->nextp(), Cell)) { // Geht nicht für den Fall, wenn der nächste null ist und ich aktuell nicht auf dem richtigen Node bin
+            v3error("In .vlt file defined MODULE for TARGET could not be found! ... Note: " << nodep->name()); // Error erst wenn wir durch alle durch sind
+        }*/
+    }
 
-void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar* nodep) {
+        // Visit all vars and add instrumentation
+        if(!m_foundCell && V3Config::hasFullName(nodep, m_currentHierarchy + "." + nodep->name())) {
+            AstVar* varp = nodep->cloneTree(false);
+            varp->name("tmp_" + nodep->name());
+            varp->origName("tmp_" + nodep->name()); //Since node is cloned
+            varp->trace(true);
+            if(nodep->direction() == VDirection::INPUT) {
+                // Input handling anschauen
+            } else if (nodep->direction() == VDirection::OUTPUT) {
+                // Output handling anschauen
+            }
+            V3Config::addInstrumentationConfigs(nodep, varp, m_currentHierarchy + "." + nodep->name());
+        }
+    }
+
+    void visit(AstAssignW* nodep) {
+        if(m_finalModule != nullptr) {
+            for(AstNode* n = nodep->op1p(); n; n = n->nextp()) {
+                if(VN_IS(n, ParseRef) && V3Config::hasFullName(VN_CAST(n, Var), m_moduleHierarchy + "." + n->name())) {
+                    V3Config::addInstrumentationConfigs(nodep->cloneTree(false), m_moduleHierarchy + "." + n->name());
+                }
+            }
+        }
+    }
+
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTOR
     //-------------------------------------------------------------------------------
-    InstrumentationTargetFinder(AstNetlist* nodep) {};
+    explicit InstrumentationTargetFinder(AstNetlist* nodep) { iterate(nodep); };
     ~InstrumentationTargetFinder() override = default;
 };
 
 //##################################################################################
 // Instrumentation class functions
+
+class InstrumentationFunction final : public VNVisitor {
+    // Visitors
+    void visit(AstNetlist* nodep) {
+
+    }
+
+    void visit(AstModule* nodep) {
+
+    }
+
+    void visit(AstCell* nodep) {
+
+    }
+
+    void visit(AstTask* nodep) {
+
+    }
+
+    void visit(AstAlways* nodep) {
+
+    }
+
+    void visit(AstTaskRef* nodep) {
+
+    }
+
+    void visit(AstAssignW* nodep) {
+
+    }
+
+    void visit(AstVarRef* nodep) {
+
+    }
+
+    //-----------------
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
+
+public:
+    // CONSTRUCTORS
+    explicit InstrumentationFunction(AstNetlist* nodep) { iterate(nodep); }
+    ~InstrumentationFunction() override = default;
+};
 
 class InstrumentationManager final {
     private:
@@ -185,45 +288,42 @@ static InstrumentationManager instrumentationManager;
 
 //##################################################################################
 // Instrumentation class ModuleDuplication
-class ModuleDuplication final : public VNVisitor {
-    AstModule* m_current_module = nullptr;
-    AstModule* m_cloned_module = nullptr;
-    bool m_foundModule = false;
-    size_t m_configIndexDup;
+class InstrumentationModuleDuplicator final : public VNVisitor {
+//AstModule* m_modulep = nullptr;
+//// VISITORS
+////----------------------------------------------------------------------------------
+//void visit(AstNetlist* nodep) {
+//    assert(V3Config::getInstrumentationModule());
+//    std::cout << "Visitor for Netlist" << nodep << std::endl;
+//    m_modulep = V3Config::getInstrumentationModule();
+//    m_modulep->name(m_modulep->name() + "__fiinst");
+//    std::cout << m_modulep << std::endl;
+//    nodep->addModulesp(m_modulep);
+//    iterateChildren(nodep);
+//    m_modulep == nullptr;
+//}
+//
+//void visit(AstModule* nodep) {
+//    std::cout << "Visitor for Modules" << std::endl;
+//    iterateChildren(nodep);
+//}
 
-    // Method
-    std::string getInstrumentConfig(std::string configType, size_t indexDup) {
-        std::string current = "";
-        current = instrumentationManager.getInstrumentConfig(configType, indexDup);
-        return current;
-    }
+//void visit(AstModule* nodep) {
+//    assert(V3Config::getInstrumentationModule());
+//    if(nodep->name() == V3Config::getInstrumentationModule()->name() &&
+//       nodep->origName() == m_modulep->origName()) {
+//        nodep->setOrigName("nonInstrumentedTop");
+//    }
+//}
 
-    // Visitors
-    void visit(AstModule* nodep) {
-        m_current_module = nodep;
-        if(nodep->name() == getInstrumentConfig("module", m_configIndexDup)){
-            m_cloned_module = nodep->cloneTree(false);
-            if(VN_IS(nodep->backp(), Netlist) == true) {
-                m_cloned_module->name(getInstrumentConfig("module", m_configIndexDup)+"__fiinst__"+std::to_string(m_configIndexDup+1));
-                nodep->setOrigName("nonInstrumentedTop");
-                VN_CAST(nodep->backp(), Netlist)->addModulesp(m_cloned_module);
-            } else {
-                m_cloned_module->name(getInstrumentConfig("module", m_configIndexDup)+"__fiinst__"+std::to_string(m_configIndexDup+1));
-                nodep->addNext(m_cloned_module);
-            }
-        } else if(nodep->nextp() == nullptr && m_cloned_module == nullptr) {
-            v3error("In .vlt file defined MODULE could not be found: " << getInstrumentConfig("module", m_configIndexDup));
-        }
-        iterateChildren(nodep);
-        m_current_module = nullptr;
-    }
-
-    //-------------------------------------------------------
-    void visit(AstNode* nodep) override { iterateChildren(nodep); }
+//---------------------------------
+void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
-    explicit ModuleDuplication(AstNetlist* nodep, size_t configIndexDup) : m_configIndexDup(configIndexDup) { iterate(nodep); }
-    ~ModuleDuplication() override = default;
+    // CONSTRUCTOR
+    //-------------------------------------------------------------------------------
+    explicit InstrumentationModuleDuplicator(AstNetlist* nodep) { iterate(nodep); };
+    ~InstrumentationModuleDuplicator() override = default;
 };
 
 //##################################################################################
@@ -417,7 +517,6 @@ class InstrumentationVisitor final : public VNVisitor {
         if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
             m_inst_var_original = nodep->cloneTree(false);
             m_inst_var_clonetree = nodep->cloneTree(false);
-            std::cout << "Instance string: " << nodep->hierarchyPath() << std::endl;
             if(nodep->direction() == VDirection::OUTPUT) {
                 m_tmp_var_port = nodep->cloneTree(false);
                 m_tmp_var_port->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll)+"_port");
@@ -572,10 +671,10 @@ void V3Instrumentation::instrumentationAll(AstNetlist* nodep, size_t configIndex
     V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
 }
 
-void V3Instrumentation::instrumentationModuleDup(AstNetlist* nodep, size_t configIndexDup){
+void V3Instrumentation::duplicateTargetModule(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
-    { ModuleDuplication{nodep, configIndexDup}; }
-    V3Global::dumpCheckGlobalTree("instrumentationModuleDup", 0, dumpTreeEitherLevel() >= 3);
+    {InstrumentationModuleDuplicator{nodep}; }
+    V3Global::dumpCheckGlobalTree("instrumentationModuleDuplicator", 0, dumpTreeEitherLevel() >= 3);
 }
 
 void V3Instrumentation::instrumentationFix(AstNetlist* nodep, size_t configIndexFix, size_t namingIndex, bool instDone) {
@@ -587,5 +686,5 @@ void V3Instrumentation::instrumentationFix(AstNetlist* nodep, size_t configIndex
 void V3Instrumentation::findTargets(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { InstrumentationTargetFinder{nodep}; }
-    V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
+    V3Global::dumpCheckGlobalTree("instrumentationFinder", 0, dumpTreeEitherLevel() >= 3);
 }

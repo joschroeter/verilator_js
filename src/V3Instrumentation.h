@@ -26,7 +26,8 @@ class AstNetlist;
 
 class V3Instrumentation final {
 public:
-    static void findTargets(AstNetlist* nodep);
+    static void findTargets(AstNetlist* nodep) VL_MT_DISABLED;
+    static void duplicateTargetModule(AstNetlist* nodep) VL_MT_DISABLED;
     static void instrumentationAll(AstNetlist* nodep, size_t configIndexAll, size_t namingIndex) VL_MT_DISABLED;
     static void instrumentationModuleDup(AstNetlist* nodep, size_t configIndexDup) VL_MT_DISABLED;
     static void instrumentationFix(AstNetlist* nodep, size_t configIndexFix, size_t namingIndex, bool instDone) VL_MT_DISABLED;

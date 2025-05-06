@@ -40,9 +40,14 @@ public:
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
     static void addInstrumentationConfigs(FileLine *fl, const string& instrumentationfunc,
                                           int faultcase, const string& target);
-    static void addInstrumentationConfigs(AstVar* varp, const string& target);
-    static void addInstrumentationConfigs(AstModule* modulep, const string& target);
+    static void addInstrumentationConfigs(AstVar* varp, AstVar* instVarp, const string& target);
+    static void addInstrumentationConfigs(AstModule* modulep, AstModule* instModulep, const string& target);
     static void addInstrumentationConfigs(AstCell* cellp, const string& target);
+    static void addInstrumentationConfigs(AstAssignW* assignp, const string& target);
+    static bool findByPrefix(const string& prefix);
+    static bool hasFullName(AstVar* nodep, const string& fullname);
+    static bool hasFullName(AstModule* nodep, const string& fullname);
+    static bool hasFullName(AstCell* nodep, const string& fullname);
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);
     static void addProfileData(FileLine* fl, const string& model, const string& key,

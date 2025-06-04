@@ -29,6 +29,7 @@
 
 #include <iostream>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string> 
 #include <vector>
@@ -40,87 +41,340 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 class InstrumentationTargetFinder final : public VNVisitor {
     string m_currentHierarchy;
     string m_moduleHierarchy;
+    AstNetlist* m_netlist = nullptr;
     AstNodeModule* m_modp = nullptr;
     AstNodeModule* m_finalModule = nullptr;
-    bool m_initialModule = false;
+    bool m_initialModule = true;
     bool m_foundCell = false;
+    int m_instrumentationIndex = 0;
 
     // METHODS
     //----------------------------------------------------------------------------------
+    AstModule* getMapEntryInstModule(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_instModulep;
+        } else {
+            return nullptr;
+        }
+    }
+    AstModule* findModp(AstNetlist* netlist, AstModule* modp) {
+        for(AstNode* n = netlist->op1p(); n; n = n->nextp()) {
+            if(VN_IS(n, Module) && VN_CAST(n, Module) == modp) {
+                return VN_CAST(n, Module);
+            }
+        }
+        return nullptr;
+    }
+    bool isFound(const string& prefix) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+
+            if (key.compare(0, prefix.size(), prefix) == 0 &&
+                (key.size() == prefix.size() || key[prefix.size()] == '.')) {
+                return it->second.m_found;
+            }
+        }
+        return false;
+    }
+    bool keyHasPrefix(const string& prefix) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+
+            if (key.compare(0, prefix.size(), prefix) == 0 &&
+                (key.size() == prefix.size() || key[prefix.size()] == '.')) {
+                return true;
+            }
+        }
+        return false;
+    }
+    bool keyHasFullName(AstModule* modulep, const std::string& position, const std::string& fullname) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            if(position == "relevant") {
+                for (size_t i = 1; i < parts.size()-1; ++i) {
+                    reduced += "." + parts[i];
+                }
+                if(reduced == fullname){
+                    return true;
+                }
+            } else if(position == "pointing") {
+                for (size_t i = 1; i < parts.size()-3; ++i) {
+                    reduced += "." + parts[i];
+                }
+                if(reduced == fullname){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    bool  keyHasFullName(AstCell* cellp, const std::string& fullname) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-2; ++i) {
+                reduced += "." + parts[i];
+            }
+            return reduced == fullname;
+        }
+        return false;
+    }
+    bool keyHasFullName(AstVar* nodep, const string& fullname) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        return instrumentationConfigs.find(fullname) != instrumentationConfigs.end();
+    }
+    std::vector<std::string> split(const std::string& str) {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream stream(str);
+        while (std::getline(stream, token, '.')) {
+            tokens.push_back(token);
+        }
+        return tokens;
+    }
+    bool hasMultiple(const std::string& target) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-1; ++i) {
+                reduced += "." + parts[i];
+            }
+            if(reduced == target) {
+                return it->second.m_multipleCellps;
+            }
+        }
+        return false;
+    }
+    void addInstrumentationConfig(AstModule* modulep, AstModule* instModulep, const string& target) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-1; ++i) {
+                reduced += "." + parts[i];
+            }
+
+            if(reduced == target) {
+                it->second.m_modulep = modulep;
+                it->second.m_instModulep = instModulep;
+            }
+        }
+    }
+    void addInstrumentationConfig(AstModule* modulep, const string& moduleType, const string& target) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+
+            if(reduced == target && moduleType == "top") { it->second.m_topModulep = modulep; } 
+            else if(moduleType == "inst") { 
+                for (size_t i = 1; i < parts.size()-1; ++i) {
+                    reduced += "." + parts[i];
+                }
+                if(reduced == target) { it->second.m_instModulep = modulep; }
+            } else if(moduleType == "orig") { 
+                for (size_t i = 1; i < parts.size()-1; ++i) {
+                    reduced += "." + parts[i];
+                }
+                if(reduced == target) { it->second.m_modulep = modulep; }
+            } else if(moduleType == "pointing") {
+                for (size_t i = 1; i < parts.size()-3; ++i) {
+                    reduced += "." + parts[i];
+                }
+                if(reduced == target) { it->second.m_pointingModulep = modulep; }
+            }
+        }
+    }
+    void addInstrumentationConfig(AstCell* cellp, const string& target) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            std::vector<std::string> parts = split(key);
+
+            std::string reduced = parts[0];
+            for (size_t i = 1; i < parts.size()-2; ++i) {
+                reduced += "." + parts[i];
+            }
+            if(reduced == target) { 
+                it->second.m_cellp = cellp;
+            }
+        }
+    }
+    void addInstrumentationConfig(AstVar* varp, AstVar* instVarp, const string& target) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        auto it = instrumentationConfigs.find(target);
+        if (it != instrumentationConfigs.end()) {
+            it->second.m_varp = varp;
+            it->second.m_instVarp = instVarp;
+        } else {
+            v3error("Instrumentation target not found! ... Note: " << target);
+        }
+    }
+    void setFound(const string& target) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        auto it = instrumentationConfigs.find(target);
+        if (it != instrumentationConfigs.end()) {
+            it->second.m_found = true;
+        }
+    }
+
+    void setMultiple(const string& prefix) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            const std::string& key = it->first;
+            if (key.compare(0, prefix.size(), prefix) == 0 &&
+                (key.size() == prefix.size() || key[prefix.size()] == '.')) {
+                    it->second.m_multipleCellps = true;
+            }
+        }
+    }
 
     // VISITORS
     //----------------------------------------------------------------------------------
     void visit(AstModule* nodep) {
-        // Visit all modules and add instrumentation
-        // Besuchen des Moduls, wenn der name des moduls in meinem target string vorkommt hinzufügen zu hirarchy string und weitergehen
-        if(!m_initialModule){
-            if(V3Config::findByPrefix(nodep->name())) {
+        bool alreadyParam = false;
+        if(m_initialModule){
+            if(keyHasPrefix(nodep->name())) {
                 m_currentHierarchy = nodep->name();
-                m_initialModule = true;
+                for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                    if(n->name() == "INSTRUMENT") {
+                        alreadyParam = true;
+                    }
+                }
+                if(!alreadyParam) {
+                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT", VFlagChildDType{}, nullptr);
+                    paramp->valuep(new AstConst(nodep->fileline(), AstConst::UnsizedSigned32{}, 0));
+                    paramp->dtypep(paramp->valuep()->dtypep());
+                    paramp->ansi(true);
+                    nodep->addStmtsp(paramp);
+                }
+                addInstrumentationConfig(nodep, "top", m_currentHierarchy);
+                m_modp = nodep;
                 iterateChildren(nodep);
             } else {
                 v3error("In .vlt file defined MODULE for TARGET could not be found! ... Note: " << nodep->name());
             }
-        } else if (nodep == m_modp) {
-            if(V3Config::hasFullName(nodep, m_currentHierarchy + "." + nodep->name())) {
-                //Fuege den node der Map hinzu
+        } else if (m_modp != nullptr &&(nodep = findModp(m_netlist, VN_CAST(m_modp, Module))) != nullptr) {
+            if(keyHasFullName(nodep, "relevant", m_currentHierarchy + "." + nodep->name())) {
+                alreadyParam = false;
                 m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
                 m_moduleHierarchy = m_currentHierarchy;
-                AstModule* modulep = nodep->cloneTree(false);
-                modulep->name(nodep->name() + "__inst");
-                V3Config::addInstrumentationConfigs(nodep, modulep, m_currentHierarchy);
                 m_finalModule = nodep;
+                for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                    if(n->name() == "INSTRUMENT") {
+                        alreadyParam = true;
+                    }
+                }
+                if(!alreadyParam) {
+                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT", VFlagChildDType{}, nullptr);
+                    paramp->valuep(new AstConst(nodep->fileline(), AstConst::UnsizedSigned32{}, 0));
+                    paramp->dtypep(paramp->valuep()->dtypep());
+                    paramp->ansi(true);
+                    nodep->addStmtsp(paramp);
+                }
+                AstModule* modulep = nodep->cloneTree(false);
+                modulep->name(nodep->name() + "__inst__" + std::to_string(m_instrumentationIndex));
+                if(hasMultiple(m_moduleHierarchy)) { modulep->inLibrary(true); }
+                addInstrumentationConfig(nodep, modulep, m_moduleHierarchy);
+                iterateChildren(nodep);
+            } else if(keyHasFullName(nodep, "pointing", m_currentHierarchy + "." + nodep->name())) {
+                m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
+                AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT", VFlagChildDType{}, nullptr);
+                paramp->valuep(new AstConst(nodep->fileline(), AstConst::UnsizedSigned32{}, 0));
+                paramp->dtypep(paramp->valuep()->dtypep());
+                paramp->ansi(true);
+                nodep->addStmtsp(paramp);
+                addInstrumentationConfig(nodep, "pointing", m_currentHierarchy);
                 iterateChildren(nodep);
             } else {
                 m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
+                for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                    if(n->name() == "INSTRUMENT") {
+                        alreadyParam = true;
+                    }
+                }
+                if(!alreadyParam) {
+                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT", VFlagChildDType{}, nullptr);
+                    paramp->valuep(new AstConst(nodep->fileline(), AstConst::UnsizedSigned32{}, 0));
+                    paramp->dtypep(paramp->valuep()->dtypep());
+                    paramp->ansi(true);
+                    nodep->addStmtsp(paramp);
+                }
                 iterateChildren(nodep);
             }
-            /*} else {
-                v3error("In .vlt file defined MODULE for TARGET could not be found! ... Note: " << nodep->name());
-            }*/
         }
         m_foundCell = false;
     }
 
     void visit(AstCell* nodep) {
-        // Visit each cell of a module and check if the name of the cell is in the target string
-        if(V3Config::findByPrefix(m_currentHierarchy + "." + nodep->name())) {
+        int pinnum = 0;
+        if (m_initialModule && keyHasPrefix(m_currentHierarchy + "." + nodep->name()) && !isFound(m_currentHierarchy + "." + nodep->name())) {
             m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
             m_foundCell = true;
+            m_initialModule = false;
+            std::multiset<AstNodeModule*> cellModps;
+            for(AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
+                if(VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
+            }
             m_modp = nodep->modp();
-            if (V3Config::hasFullName(nodep, m_currentHierarchy)) {
-                //Fuege den node der Map hinzu;
-                V3Config::addInstrumentationConfigs(nodep, m_currentHierarchy);
+            for(AstNode* n = nodep->pinsp(); n; n = n->nextp()) {
+                pinnum++;
+            }
+            AstPin* pinp = new AstPin(nodep->fileline(), pinnum+1, "INSTRUMENT", 
+                                        new AstConst(nodep->fileline(), AstConst::UnsizedSigned32{}, 1));
+            pinp->param(true);
+            nodep->addParamsp(pinp);
+            auto modpRepetition = cellModps.count(m_modp);
+            if( modpRepetition > 1 && !keyHasFullName(VN_CAST(m_modp, Module), "relevant", m_currentHierarchy+ "." + m_modp->name())) { setMultiple(m_currentHierarchy); }
+            addInstrumentationConfig(nodep, m_currentHierarchy);
+        } else if(keyHasPrefix(m_currentHierarchy + "." + nodep->name()) && !isFound(m_currentHierarchy + "." + nodep->name())) {
+            m_currentHierarchy = m_currentHierarchy + "." + nodep->name();
+            m_foundCell = true;
+            std::multiset<AstNodeModule*> cellModps;
+            for(AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
+                if(VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
+            }
+            m_modp = nodep->modp();
+            for(AstNode* n = nodep->pinsp(); n; n = n->nextp()) {
+                pinnum++;
+            }
+            AstPin* pinp = new AstPin(nodep->fileline(), pinnum+1, "INSTRUMENT", 
+                                        new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"));
+            pinp->param(true);
+            nodep->addParamsp(pinp);
+            auto modpRepetition = cellModps.count(m_modp);
+            if( modpRepetition > 1 && !keyHasFullName(VN_CAST(m_modp, Module), "relevant", m_currentHierarchy+ "." + m_modp->name())) { setMultiple(m_currentHierarchy); }
+            if (keyHasFullName(nodep, m_currentHierarchy)) {
+                addInstrumentationConfig(nodep, m_currentHierarchy);
             }
         }
-        /*else if(!VN_IS(nodep->nextp(), Cell)) { // Geht nicht für den Fall, wenn der nächste null ist und ich aktuell nicht auf dem richtigen Node bin
-            v3error("In .vlt file defined MODULE for TARGET could not be found! ... Note: " << nodep->name()); // Error erst wenn wir durch alle durch sind
-        }*/
     }
 
     void visit(AstVar* nodep) {
         // Visit all vars and add instrumentation
-        if(!m_foundCell && V3Config::hasFullName(nodep, m_currentHierarchy + "." + nodep->name())) {
+        if(!m_foundCell && keyHasFullName(nodep, m_currentHierarchy + "." + nodep->name())) {
             AstVar* varp = nodep->cloneTree(false);
             varp->name("tmp_" + nodep->name());
-            varp->origName("tmp_" + nodep->name()); //Since node is cloned
+            varp->origName("tmp_" + nodep->name());
             varp->trace(true);
-            if(nodep->direction() == VDirection::INPUT) {
-                // Input handling anschauen
-            } else if (nodep->direction() == VDirection::OUTPUT) {
-                // Output handling anschauen
-            }
-            V3Config::addInstrumentationConfigs(nodep, varp, m_currentHierarchy + "." + nodep->name());
-        }
-    }
-
-    void visit(AstAssignW* nodep) {
-        if(m_finalModule != nullptr) {
-            for(AstNode* n = nodep->op1p(); n; n = n->nextp()) {
-                if(VN_IS(n, ParseRef) && V3Config::hasFullName(VN_CAST(n, Var), m_moduleHierarchy + "." + n->name())) {
-                    V3Config::addInstrumentationConfigs(nodep->cloneTree(false), m_moduleHierarchy + "." + n->name());
-                }
-            }
+            addInstrumentationConfig(nodep, varp, m_currentHierarchy + "." + nodep->name());
+            setFound(m_currentHierarchy + "." + nodep->name());
         }
     }
 
@@ -129,45 +383,316 @@ class InstrumentationTargetFinder final : public VNVisitor {
 public:
     // CONSTRUCTOR
     //-------------------------------------------------------------------------------
-    explicit InstrumentationTargetFinder(AstNetlist* nodep) { iterate(nodep); };
+    explicit InstrumentationTargetFinder(AstNetlist* nodep) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); it++) {
+            m_netlist = nodep;
+            iterate(nodep);
+            m_initialModule = true;
+            m_currentHierarchy = "";
+            m_instrumentationIndex++;
+        }
+    };
     ~InstrumentationTargetFinder() override = default;
 };
 
 //##################################################################################
 // Instrumentation class functions
-
 class InstrumentationFunction final : public VNVisitor {
-    // Visitors
-    void visit(AstNetlist* nodep) {
+    bool m_assignw = false;
+    bool m_addedport = false;
+    int m_pinnum = 0;
+    string m_targetKey;
+    AstAlways* m_alwaysp = nullptr;
+    AstBegin* m_instBeginp = nullptr;
+    AstTask* m_taskp = nullptr;
+    AstTaskRef* m_taskrefp = nullptr;
+    AstModule* m_current_module = nullptr;
+    AstModule* m_current_module_cell_check = nullptr;
+    AstVar* m_tmp_varp = nullptr;
+    AstVar* m_orig_varp = nullptr;
+    AstParseRef* m_added_parserefp = nullptr;
+    AstPort* m_orig_portp = nullptr;
 
+    // METHODS
+    AstCell* getMapEntryCell(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_cellp;
+        } else {
+            return nullptr;
+        }
+    }
+    AstModule* getMapEntryInstModule(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_instModulep;
+        } else {
+            return nullptr;
+        }
+    }
+    AstModule* getMapEntryPointingModule(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if (instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_pointingModulep;
+        } else {
+            return nullptr;
+        }
+    }
+    AstVar* getMapEntryInstVar(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_instVarp;
+        } else {
+            return nullptr;
+        }
+    }
+    AstVar* getMapEntryVar(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_varp;
+        } else {
+            return nullptr;
+        }
+    }
+    bool isInstModEntry(AstModule* nodep, const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end() && instrumentationConfigs->second.m_instModulep == nodep) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+    bool isTopModEntry(AstModule* nodep) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            if (nodep == it->second.m_topModulep) {
+                return true;
+            }
+        }
+        return false;
+    }
+    bool isPointingModEntry(AstModule* nodep) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            if (nodep == it->second.m_pointingModulep) {
+                return true;
+            }
+        }
+        return false;
+    }
+    bool isDone(AstModule* nodep) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            if (nodep == it->second.m_instModulep) {
+                return it->second.m_instModulep;
+            }
+        }
+        return true;
+    }
+    bool hasMultiple(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_multipleCellps;
+        } else {
+            return false;
+        }
+    }
+    int getMapEntryFaultCase(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if (instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_faultcase;
+        } else {
+            return -1;
+        }
+    }
+    string getMapEntryFunction(const std::string& key) {
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
+        if (instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
+            return instrumentationConfigs->second.m_instrumentationfunc;
+        } else {
+            return "";
+        }
+    }
+    void setDone(AstModule* nodep) {
+        auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            if (nodep == it->second.m_instModulep) {
+                it->second.m_done = true;
+            }
+        }
     }
 
+    // Visitors
+    void visit(AstNetlist* nodep) {
+        /* Loop over map entrances for module nodes and add them to the tree */
+        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
+            nodep->addModulesp(it->second.m_instModulep);
+            m_targetKey = it->first;
+            iterateChildren(nodep);
+            m_assignw = false;
+        }
+    }
+    
     void visit(AstModule* nodep) {
+        /*
+        Visit every instrumented module and crosscheck with the map module entrances.
+        If the instrumented module is in the map, make the relevant changes to the module.
+        */
+        m_tmp_varp = getMapEntryInstVar(m_targetKey);
+        m_orig_varp = getMapEntryVar(m_targetKey);
+        if(isInstModEntry(nodep, m_targetKey) && isDone(nodep)) {
+            m_current_module = nodep;
 
+            m_taskp = new AstTask(nodep->fileline(), getMapEntryFunction(m_targetKey), nullptr);
+            m_taskp->dpiImport(true);
+            m_taskp->prototype(true);
+            nodep->addStmtsp(m_taskp);
+
+            if(m_orig_varp->direction() == VDirection::INPUT) {
+                m_tmp_varp->varType(VVarType::VAR);
+                m_tmp_varp->direction(VDirection::NONE);
+                m_tmp_varp->trace(true);
+            }
+            nodep->addStmtsp(m_tmp_varp);
+
+            m_taskrefp = new AstTaskRef(nodep->fileline(), getMapEntryFunction(m_targetKey),
+                                                    new AstArg(nodep->fileline(), m_tmp_varp->name(),
+                                                                new AstVarRef(nodep->fileline(), m_tmp_varp, VAccess::WRITE)));
+            m_taskrefp->taskp(m_taskp);
+            m_alwaysp = new AstAlways(nodep->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr);
+            nodep->addStmtsp(m_alwaysp);
+            iterateChildren(nodep);
+        } else if((isPointingModEntry(nodep) || isTopModEntry(nodep)) && !hasMultiple(m_targetKey)) {
+            m_current_module_cell_check = nodep;
+            AstCell* instCellp = getMapEntryCell(m_targetKey);
+            for(AstNode* n = instCellp->pinsp(); n; n = n->nextp()) { m_pinnum++; }
+            iterateChildren(nodep);
+        } else if (isPointingModEntry(nodep) && hasMultiple(m_targetKey)) {
+            std::cout << "Multiple cells" << std::endl;
+            m_current_module_cell_check = nodep;
+            AstCell* instCellp = getMapEntryCell(m_targetKey)->cloneTree(false);
+            instCellp->modp(getMapEntryInstModule(m_targetKey));
+            for(AstNode* n = instCellp->pinsp(); n; n = n->nextp()) { m_pinnum++; }
+            m_instBeginp = new AstBegin(nodep->fileline(), "", instCellp, true, false);
+            AstGenIf* genifp = new AstGenIf(nodep->fileline(), 
+                                            new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"),
+                                            m_instBeginp,
+                                            new AstBegin(nodep->fileline(), "", getMapEntryCell(m_targetKey)->cloneTree(false), true, false));
+            iterateChildren(m_instBeginp);
+            nodep->addStmtsp(genifp);
+            iterateChildren(nodep);
+        }
+        m_current_module = nullptr;
+        m_current_module_cell_check = nullptr;
+        m_alwaysp = nullptr;
+        m_taskrefp = nullptr;
+    }
+
+    void visit(AstPort* nodep) {
+        if(m_current_module != nullptr && m_orig_varp->direction() == VDirection::OUTPUT && nodep->name() == m_orig_varp->name() && !m_addedport) {
+            m_orig_portp = nodep->cloneTree(false);
+            nodep->unlinkFrBack();
+            nodep->deleteTree();
+            m_current_module->addStmtsp(new AstPort(nodep->fileline(), m_orig_portp->pinNum(), m_tmp_varp->name()));
+            m_current_module->addStmtsp(new AstPort(nodep->fileline(), m_pinnum+1, m_orig_portp->name()));
+            m_addedport = true;
+        }
     }
 
     void visit(AstCell* nodep) {
+        /*
+        Check if firstCellp in Map is set. If this is the case, change the link of this cell to the correct instrumented Modul.deleter
+        If not, add conditional logic to select between instrumented and original module depending on Parameter INSTRUMENT
+        */
+        if(m_current_module_cell_check != nullptr && !hasMultiple(m_targetKey) && nodep == getMapEntryCell(m_targetKey)) {
+            nodep->modp(getMapEntryInstModule(m_targetKey));
+            if(m_orig_varp->direction() == VDirection::OUTPUT) {
+                iterateChildren(nodep);
+            }
+        } else if(m_current_module_cell_check != nullptr && hasMultiple(m_targetKey) && nodep == getMapEntryCell(m_targetKey)) {
+            nodep->unlinkFrBack();
+            nodep->deleteTree();
+        } else if(m_instBeginp != nullptr && nodep->modp() == getMapEntryInstModule(m_targetKey) && m_orig_varp->direction() == VDirection::OUTPUT) {
+            iterateChildren(nodep);
+        }
+    }
 
+    void visit(AstPin* nodep) {
+        if(nodep->name() == m_orig_varp->name()) {
+            nodep->name(m_tmp_varp->name());
+        }
     }
 
     void visit(AstTask* nodep) {
+        if(nodep == m_taskp && m_current_module != nullptr) {
+            AstVar* fi_id = nullptr;
+            AstVar* var_x_task = nullptr;
+            AstVar* tmp_var_task = nullptr;
 
+            fi_id = new AstVar(nodep->fileline(), VVarType::PORT, "id", VFlagChildDType{},
+                                    new AstBasicDType(nodep->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED, 32, 0));
+            fi_id->direction(VDirection::INPUT);
+
+            var_x_task = m_orig_varp->cloneTree(false);
+            var_x_task->varType(VVarType::PORT);
+            var_x_task->direction(VDirection::INPUT);
+
+            tmp_var_task = m_tmp_varp->cloneTree(false);
+            tmp_var_task->varType(VVarType::PORT);
+            tmp_var_task->direction(VDirection::OUTPUT);
+
+            nodep->addStmtsp(fi_id);
+            nodep->addStmtsp(var_x_task);
+            nodep->addStmtsp(tmp_var_task);
+        }
     }
 
     void visit(AstAlways* nodep) {
+        if(nodep == m_alwaysp && m_current_module != nullptr) {
+            AstBegin* newBegin = nullptr;
 
+            m_taskrefp = new AstTaskRef(nodep->fileline(), getMapEntryFunction(m_targetKey), nullptr);
+
+            newBegin = new AstBegin(nodep->fileline(), "",
+                            new AstStmtExpr(nodep->fileline(), m_taskrefp),
+                            false, false);
+            nodep->addStmtsp(newBegin);
+        }
+        iterateChildren(nodep);
     }
 
     void visit(AstTaskRef* nodep) {
+        if(nodep == m_taskrefp && m_current_module != nullptr) {
+            AstConst* constp_id = nullptr;
 
+            constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{}, getMapEntryFaultCase(m_targetKey));
+
+            m_added_parserefp = new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, m_orig_varp->name());
+
+            nodep->addPinsp(new AstArg(nodep->fileline(), "", constp_id));
+            nodep->addPinsp(new AstArg(nodep->fileline(), "", m_added_parserefp));
+            nodep->addPinsp(new AstArg(nodep->fileline(), "",
+                        new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, m_tmp_varp->name())));
+        }
     }
 
     void visit(AstAssignW* nodep) {
-
+        if(m_current_module != nullptr) {
+            m_assignw = true;
+            iterateChildren(nodep);
+        }
     }
 
-    void visit(AstVarRef* nodep) {
-
+    void visit(AstParseRef* nodep) {
+        if(m_current_module != nullptr && m_orig_varp != nullptr && nodep->name() == getMapEntryVar(m_targetKey)->name()) {
+            if(m_assignw && m_orig_varp->direction() != VDirection::OUTPUT) {
+                nodep->name(getMapEntryInstVar(m_targetKey)->name());
+            } else if(m_orig_varp->direction() == VDirection::INPUT) {
+                nodep->name(getMapEntryInstVar(m_targetKey)->name());
+            }
+        }
     }
 
     //-----------------
@@ -179,512 +704,16 @@ public:
     ~InstrumentationFunction() override = default;
 };
 
-class InstrumentationManager final {
-    private:
-    struct InstrumentationConfig
-    {
-        std::string model;
-        std::string id;
-        std::string module;
-        std::string instance;
-        std::string var;
-
-        bool hasData() const {
-            return false;
-        }
-    };
-
-    std::vector<InstrumentationConfig> m_configs;
-    std::vector<InstrumentationConfig> m_handledConfigs;
-
-    public:
-    bool existingInstrumentConfig() const {
-        return m_configs.empty();
-    }
-
-    int checkForDuplicate(size_t targetIndexParam) {
-        for(size_t i = 0; i < m_handledConfigs.size(); ++i) {
-            if(i == targetIndexParam) continue;
-
-            std::string valueModule;
-            std::string valueInstance;
-
-            valueModule = m_handledConfigs[i].module;
-            valueInstance = m_handledConfigs[i].instance;
-
-            // Check if the value already exists in the configuration
-            if(valueModule == getInstrumentConfig("module", targetIndexParam) & valueInstance == getInstrumentConfig("instance", targetIndexParam)) {
-                return i;
-            }
-        }
-        m_handledConfigs.emplace_back(m_configs[targetIndexParam]);
-        return -1;
-    }
-
-    void cleanHandledConfig() {
-        m_handledConfigs.clear();
-    }
-// ------------ Schauen ob man das anders machen kann, zwei nahezu identische funktionen --------
-    std::string getHandledConfig(const std::string& configType, size_t m_configIndex) {
-        // Ensure m_configIndex is within bounds
-        if (m_configIndex >= m_handledConfigs.size()) {
-            return "Invalid Index!";
-        }
-
-        const auto& handledConfig = m_handledConfigs[m_configIndex];
-        std::stringstream handledconfigData;
-
-        if (configType == "model") {
-            handledconfigData << handledConfig.model;
-        } else if (configType == "id") {
-            handledconfigData << handledConfig.id;
-        } else if (configType == "module") {
-            handledconfigData << handledConfig.module;
-        } else if (configType == "instance") {
-            handledconfigData << handledConfig.instance;
-        } else if (configType == "var") {
-            handledconfigData << handledConfig.var;
-        } else {
-            return "Invalid Config-Type!";
-        }
-        return handledconfigData.str();
-    }
-
-    std::string getInstrumentConfig(const std::string& configType, size_t m_configIndex) {
-        // Ensure m_configIndex is within bounds
-        if (m_configIndex >= m_configs.size()) {
-            return "Invalid Index!";
-        }
-
-        const auto& config = m_configs[m_configIndex];
-        std::stringstream configData;
-
-        if (configType == "model") {
-            configData << config.model;
-        } else if (configType == "id") {
-            configData << config.id;
-        } else if (configType == "module") {
-            configData << config.module;
-        } else if (configType == "instance") {
-            configData << config.instance;
-        } else if (configType == "var") {
-            configData << config.var;
-        } else {
-            return "Invalid Config-Type!";
-        }
-        return configData.str();
-    }
-// ----------------------------------------------------------------------------------------------
-    size_t getInstrumentationAmount(){
-        return m_configs.size();
-    }
-
-    void storeInstrumentConfig(const std::string& model, const std::string& id, const std::string& module, const std::string& instance, const std::string& var) {
-        m_configs.emplace_back(InstrumentationConfig{model, id, module, instance, var});
-    }
-};
-
-static InstrumentationManager instrumentationManager;
-
-//##################################################################################
-// Instrumentation class ModuleDuplication
-class InstrumentationModuleDuplicator final : public VNVisitor {
-//AstModule* m_modulep = nullptr;
-//// VISITORS
-////----------------------------------------------------------------------------------
-//void visit(AstNetlist* nodep) {
-//    assert(V3Config::getInstrumentationModule());
-//    std::cout << "Visitor for Netlist" << nodep << std::endl;
-//    m_modulep = V3Config::getInstrumentationModule();
-//    m_modulep->name(m_modulep->name() + "__fiinst");
-//    std::cout << m_modulep << std::endl;
-//    nodep->addModulesp(m_modulep);
-//    iterateChildren(nodep);
-//    m_modulep == nullptr;
-//}
-//
-//void visit(AstModule* nodep) {
-//    std::cout << "Visitor for Modules" << std::endl;
-//    iterateChildren(nodep);
-//}
-
-//void visit(AstModule* nodep) {
-//    assert(V3Config::getInstrumentationModule());
-//    if(nodep->name() == V3Config::getInstrumentationModule()->name() &&
-//       nodep->origName() == m_modulep->origName()) {
-//        nodep->setOrigName("nonInstrumentedTop");
-//    }
-//}
-
-//---------------------------------
-void visit(AstNode* nodep) override { iterateChildren(nodep); }
-
-public:
-    // CONSTRUCTOR
-    //-------------------------------------------------------------------------------
-    explicit InstrumentationModuleDuplicator(AstNetlist* nodep) { iterate(nodep); };
-    ~InstrumentationModuleDuplicator() override = default;
-};
-
-//##################################################################################
-// Instrumentation class Fix
-class Fix final : public VNVisitor {
-AstModule* m_fiinstr_module = nullptr;
-AstPin* m_tmp_pin = nullptr;
-AstVar* m_tmp_var = nullptr;
-bool m_instDone = false;
-bool m_instanceFound = false;
-size_t m_configIndexFix;
-size_t m_namingIndex;
-std::string base_name = instrumentationManager.getInstrumentConfig("module", m_configIndexFix) + "__fiinst__" + std::to_string(m_namingIndex + 1);
-
-// Method
-AstVar* getVarp(AstNode* nodep, string var_name) {
-    AstVar* varp = nullptr;
-    for(nodep; nodep; nodep = nodep->nextp()) {
-        if(VN_IS(nodep, Var) && VN_AS(nodep, Var)->name() == var_name) {
-                varp = VN_AS(nodep, Var);
-                break;
-            }
-    }
-    return varp;
-}
-
-AstVarRef* getvarrefp(AstNode* nodep, string node_name) {
-    AstVarRef* varrefp = nullptr;
-    AstPin* pinp = nullptr;
-    for(nodep; nodep; nodep = nodep->nextp()) {
-        if(VN_IS(nodep, Pin) && VN_AS(nodep, Pin)->name() == node_name) {
-            pinp = VN_CAST(nodep, Pin)->cloneTree(false);
-            varrefp = VN_CAST(pinp->exprp(), VarRef);
-            varrefp->unlinkFrBack();
-            break;
-        }
-    }
-    return varrefp;
-}
-
-// Visitors
-    void visit(AstNetlist* nodep) {
-        if(!m_instDone) {
-            for(AstNode* n=nodep->op1p(); n; n = n->nextp()) {
-                if(n->name().substr(0, base_name.size()) == base_name) {
-                    m_fiinstr_module = VN_AS(n, Module);
-                    break;
-                }
-            }
-        } else {
-            for(AstNode* n=nodep->op1p(); n; n = n->nextp()) {
-                if(VN_IS(n, Module) && n->name().substr(0, base_name.size()) == base_name) {
-                    m_tmp_var = getVarp(n->op2p(), "tmp_"+instrumentationManager.getInstrumentConfig("var", m_configIndexFix));
-                    m_tmp_var->origName("tmp_"+instrumentationManager.getInstrumentConfig("var", m_configIndexFix));
-                }
-            }
-        }
-        iterateChildren(nodep);
-    }
-
-    void visit(AstCell* nodep) {
-        if(m_fiinstr_module != NULL && !m_instDone && nodep->name() == instrumentationManager.getInstrumentConfig("instance", m_configIndexFix)) {
-            nodep->modp(m_fiinstr_module);
-            m_fiinstr_module = nullptr;
-            m_instanceFound = true;
-        } else if(m_instDone) {
-            if(nodep->name() == instrumentationManager.getInstrumentConfig("instance", m_configIndexFix)) {
-                m_tmp_pin = new AstPin(nodep->fileline(), 99, "tmp_"+instrumentationManager.getInstrumentConfig("var", m_configIndexFix), getvarrefp(nodep->op1p(), instrumentationManager.getInstrumentConfig("var", m_configIndexFix)));
-                m_tmp_pin->modVarp(m_tmp_var);
-                nodep->addPinsp(m_tmp_pin);
-            }
-        }
-    }
-
-    void visit(AstTypeTable* nodep) {
-        if(!m_instanceFound && !m_instDone && instrumentationManager.getInstrumentConfig("instance", m_configIndexFix) != "") {
-            v3error("In .vlt file defined INSTANCE could not be found: " << instrumentationManager.getInstrumentConfig("instance", m_configIndexFix));
-        }
-    }
-
-    //-------------------------------------------------------
-    void visit(AstNode* nodep) override { iterateChildren(nodep); };
-
-public:
-    explicit Fix(AstNetlist* nodep, size_t configIndexFix, size_t namingIndex, bool instDone) : m_configIndexFix(configIndexFix), m_namingIndex(namingIndex), m_instDone(instDone) { iterate(nodep); }
-    ~Fix() override = default;
-};
-
-//##################################################################################
-// Instrumentation class visitor
-class InstrumentationVisitor final : public VNVisitor {
-    AstVar* m_tmp_var = nullptr;
-    AstVar* m_tmp_var_port = nullptr;
-    AstModule* m_current_module = nullptr;
-    AstAlways* m_alwaysp = nullptr;
-    AstAssignW* m_original_AssignW = nullptr;
-    AstTaskRef* m_taskrefp = nullptr;
-    AstVar* m_inst_var_clonetree = nullptr;
-    AstVar* m_inst_var_original = nullptr;
-    AstVarRef* m_added_varrefp = nullptr;
-    AstVarRef* m_previous_varrefp = nullptr;
-    bool m_outputChanged = false;
-    bool m_newAssignWAdded = false;
-    size_t m_configIndexAll;
-    size_t m_namingIndex;
-    std::string m_base_name = instrumentationManager.getInstrumentConfig("module", m_configIndexAll) + "__fiinst__" + std::to_string(m_namingIndex + 1);
-
-    // METHODS
-      AstTask* getTaskp(AstNode* nodep, size_t taskIndexAll) {
-        AstTask* taskp = nullptr;
-        for(nodep; nodep; nodep = nodep->backp()) {
-            if(VN_IS(nodep, Task) && VN_AS(nodep, Task)->name() == instrumentationManager.getInstrumentConfig("model", taskIndexAll)) {
-                taskp = VN_AS(nodep, Task);
-                break;
-            }
-        }
-        return taskp;
-    }
-
-    AstVar* getVarp(AstNode* nodep, string var_name) {
-        AstVar* varp = nullptr;
-        for(nodep; nodep; nodep = nodep->backp()) {
-            if(VN_IS(nodep, Var) && VN_AS(nodep, Var)->name() == var_name) {
-                varp = VN_AS(nodep, Var);
-                break;
-            }
-        }
-        return varp;
-    }
-
-    // Visitors
-    void visit(AstModule* nodep) {
-        m_current_module = nodep;
-        m_outputChanged = false;
-        //V3Config::getInstrumentationConfigs();
-        if(nodep->name().substr(0, m_base_name.size()) == m_base_name && nodep->dead() == false) {
-            for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                if(VN_IS(n->nextp(), AssignW)) {
-                    // Adding Task
-                    AstTask* taskp = nullptr;
-                    taskp = new AstTask(n->fileline(), instrumentationManager.getInstrumentConfig("model", m_configIndexAll), nullptr);
-                    taskp->dpiImport(true);
-                    taskp->prototype(true);
-                    n->addNextHere(taskp);
-                    n = n->nextp();
-
-                    // Adding Var
-                    if(m_inst_var_clonetree == NULL) {
-                        v3error("Error Userinput: Userdefined variable to be instrumented in .vlt file not existent. Relevant variable: " << instrumentationManager.getInstrumentConfig("var", m_configIndexAll) << " (Possibly wrong case?)");
-                        V3Error::abortIfErrors();
-                    }
-                    m_tmp_var = m_inst_var_clonetree;
-                    m_tmp_var->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
-                    m_tmp_var->origName("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
-                    m_tmp_var->trace(true);
-                    if(m_inst_var_original->direction() == VDirection::INPUT || m_inst_var_original->direction() == VDirection::OUTPUT) {
-                        m_tmp_var->varType(VVarType::VAR);
-                        m_tmp_var->direction(VDirection::NONE);
-                        m_tmp_var->lifetime(VLifetime::STATIC);
-                        m_tmp_var->trace(true);
-                        m_inst_var_clonetree = m_tmp_var->cloneTree(false); //Resetting the cloned Tree so that there is no issue with already in usage
-                    } else {
-                        m_inst_var_clonetree = m_tmp_var->cloneTree(false); //Resetting the cloned Tree so that there is no issue with already in usage
-                    }
-                    if(m_inst_var_original->direction() == VDirection::OUTPUT) {
-                        n->addNextHere(m_tmp_var_port);
-                        n->nextp();
-                    }
-                    n->addNextHere(m_tmp_var);
-                    n = n->nextp();
-
-                    // Adding Always
-                    m_taskrefp = new AstTaskRef(nodep->fileline(), instrumentationManager.getInstrumentConfig("model", m_configIndexAll),
-                                                            new AstArg(nodep->fileline(), "tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll),
-                                                                        new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::WRITE)));
-                    m_taskrefp->taskp(taskp);
-                    m_alwaysp = new AstAlways(n->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr);
-                    n->addNextHere(m_alwaysp);
-                    n = n->nextp();
-                    break;
-                }
-            }
-        }
-        iterateChildren(nodep);
-        m_current_module = nullptr;
-        m_alwaysp = nullptr;
-        m_taskrefp = nullptr;
-    }
-
-    void visit(AstVar* nodep) {
-        if(m_current_module != NULL && m_current_module->name() == instrumentationManager.getInstrumentConfig("module", m_configIndexAll) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
-            m_inst_var_original = nodep->cloneTree(false);
-            m_inst_var_clonetree = nodep->cloneTree(false);
-            if(nodep->direction() == VDirection::OUTPUT) {
-                m_tmp_var_port = nodep->cloneTree(false);
-                m_tmp_var_port->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll)+"_port");
-            }
-        }
-        iterateChildren(nodep);
-    }
-
-    void visit(AstTask* nodep) {
-        if(m_current_module != NULL && m_current_module->name().substr(0, m_base_name.size()) == m_base_name && m_current_module->dead() == false && nodep->name() == instrumentationManager.getInstrumentConfig("model", m_configIndexAll)) {
-            assert(m_inst_var_clonetree);
-            AstVar* fi_id = nullptr;
-            AstVar* var_x_task = nullptr;
-            AstVar* tmp_var_task = nullptr;
-            FileLine* const fl = nodep->fileline();
-
-            fi_id = new AstVar(fl, VVarType::PORT, "id", VFlagChildDType{},
-                                    new AstBasicDType(fl, VBasicDTypeKwd::INT, VSigning::SIGNED, 32, 0));
-            fi_id->direction(VDirection::INPUT);
-            fi_id->funcLocal(true);
-            fi_id->lifetime(VLifetime::AUTOMATIC);
-
-            var_x_task = m_inst_var_clonetree;
-            var_x_task->name(instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
-            var_x_task->origName(instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
-            var_x_task->varType(VVarType::PORT);
-            var_x_task->direction(VDirection::INPUT);
-            var_x_task->funcLocal(true);
-            var_x_task->lifetime(VLifetime::AUTOMATIC);
-            m_inst_var_clonetree = var_x_task->cloneTree(false); //Resetting the cloned Tree so that there is no issue with already in usage
-
-            tmp_var_task = m_inst_var_clonetree;
-            tmp_var_task->name("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
-            tmp_var_task->origName("tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll));
-            tmp_var_task->varType(VVarType::PORT);
-            tmp_var_task->direction(VDirection::OUTPUT);
-            tmp_var_task->funcLocal(true);
-            tmp_var_task->lifetime(VLifetime::AUTOMATIC);
-            m_inst_var_clonetree = m_inst_var_original->cloneTree(false);
-
-            nodep->addStmtsp(fi_id);
-            nodep->addStmtsp(var_x_task);
-            nodep->addStmtsp(tmp_var_task);
-        }
-        iterateChildren(nodep);
-    }
-
-    void visit (AstAlways* nodep) {
-        if(m_current_module != NULL && m_current_module->name().substr(0, m_base_name.size()) == m_base_name && m_current_module->dead() == false){
-            assert(m_alwaysp);
-            if(nodep == m_alwaysp) {
-                AstBegin* newBegin = nullptr;
-
-                m_taskrefp = new AstTaskRef(nodep->fileline(), instrumentationManager.getInstrumentConfig("model", m_configIndexAll), nullptr);
-                m_taskrefp->taskp(getTaskp(nodep, m_configIndexAll));
-
-                newBegin = new AstBegin(nodep->fileline(), "",
-                                new AstStmtExpr(nodep->fileline(), m_taskrefp),
-                                false, false);
-                nodep->addStmtsp(newBegin);
-            }
-        }
-        iterateChildren(nodep);
-    }
-
-    void visit(AstTaskRef* nodep) {
-        if(m_current_module != NULL && m_current_module->name().substr(0, m_base_name.size()) == m_base_name && m_current_module->dead() == false) {
-            if(m_taskrefp) {
-                AstConst* constp_id = nullptr;
-
-                constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{}, std::stoi(instrumentationManager.getInstrumentConfig("id", m_configIndexAll)));
-
-                m_added_varrefp = new AstVarRef(nodep->fileline(), getVarp(nodep, instrumentationManager.getInstrumentConfig("var", m_configIndexAll)), VAccess::READ);
-
-                nodep->addPinsp(new AstArg(nodep->fileline(), "", constp_id));
-                nodep->addPinsp(new AstArg(nodep->fileline(), "", m_added_varrefp));
-                nodep->addPinsp(new AstArg(nodep->fileline(), "",
-                            new AstVarRef(nodep->fileline(), getVarp(nodep, "tmp_" + instrumentationManager.getInstrumentConfig("var", m_configIndexAll)), VAccess::WRITE)));
-            }
-        }
-        iterateChildren(nodep);
-    }
-
-    void visit(AstAssignW* nodep) {
-        if(m_current_module != NULL && m_current_module->dead() == false && m_current_module->name().substr(0, m_base_name.size()) == m_base_name && !m_newAssignWAdded && m_inst_var_original != NULL && m_inst_var_original->direction() == VDirection::OUTPUT) {
-            for(AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                if(VN_IS(n, VarRef) && VN_AS(n, VarRef)->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
-                    VN_CAST(n, VarRef)->setInstrumented(true);
-                    break;
-                }
-            }
-            AstVarRef* var_ref_port = new AstVarRef(nodep->fileline(), m_tmp_var_port, VAccess::WRITE);
-            AstVarRef* var_ref = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
-            var_ref_port->setInstrumented(true);
-            var_ref->setInstrumented(true);
-
-            AstAssignW* instAssignW = new AstAssignW(nodep->fileline(), var_ref_port, var_ref, nullptr);
-            m_current_module->addStmtsp(instAssignW);
-            m_newAssignWAdded = true;
-        }
-        iterateChildren(nodep);
-    }
-
-    void visit(AstVarRef* nodep) {
-        AstVarRef* changed_varrefp = nullptr;
-        if(m_current_module != NULL && m_current_module->name().substr(0, m_base_name.size()) == m_base_name && m_current_module->dead() == false){
-            if(m_inst_var_original != NULL && m_inst_var_original->direction() == VDirection::OUTPUT && !(nodep->isInstrumented()) && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll) && nodep->isInstrumented() == false) {
-                if(nodep->access() == VAccess::WRITE) {
-                    if(m_previous_varrefp->backp()->type() != VNType::atSelBit){
-                        changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var_port, VAccess::WRITE);
-                        nodep->replaceWith(changed_varrefp);
-                        m_previous_varrefp = nodep;
-                        m_outputChanged = true;
-                    } else {
-                        changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var_port, VAccess::READ);
-                        m_previous_varrefp->backp()->replaceWith(changed_varrefp);
-                        m_previous_varrefp = nodep;
-                        m_outputChanged = true;
-                    }
-                } else if(m_outputChanged && nodep->access() == VAccess::READ) {
-                    changed_varrefp = nodep->cloneTree(false);
-                    changed_varrefp->varp(m_tmp_var_port);
-                    nodep->replaceWith(changed_varrefp);
-                    m_previous_varrefp = nodep;
-                }
-            } else if(m_inst_var_original != NULL && nodep->name() == instrumentationManager.getInstrumentConfig("var", m_configIndexAll)) {
-                if(nodep != m_added_varrefp && nodep->access() == VAccess::READ){
-                    changed_varrefp = new AstVarRef(nodep->fileline(), m_tmp_var, VAccess::READ);
-                    nodep->replaceWith(changed_varrefp);
-                    m_previous_varrefp = nodep;
-                }
-            }
-        }
-        m_previous_varrefp = nodep;
-        iterateChildren(nodep);
-    }
-
-    //-----------------
-    void visit(AstNode* nodep) override { iterateChildren(nodep); }
-
-public:
-    // CONSTRUCTORS
-    explicit InstrumentationVisitor(AstNetlist* nodep, size_t configIndexAll, size_t namingIndex) : m_configIndexAll(configIndexAll), m_namingIndex(namingIndex) { iterate(nodep); }
-    ~InstrumentationVisitor() override = default;
-};
-
 //##################################################################################
 // Instrumentation class functions
-void V3Instrumentation::instrumentationAll(AstNetlist* nodep, size_t configIndexAll, size_t namingIndex) {
-    UINFO(2, __FUNCTION__ << ": " << endl);
-    { InstrumentationVisitor{nodep, configIndexAll, namingIndex}; }
-    V3Global::dumpCheckGlobalTree("instrumentation", 0, dumpTreeEitherLevel() >= 3);
-}
-
-void V3Instrumentation::duplicateTargetModule(AstNetlist* nodep) {
-    UINFO(2, __FUNCTION__ << ": " << endl);
-    {InstrumentationModuleDuplicator{nodep}; }
-    V3Global::dumpCheckGlobalTree("instrumentationModuleDuplicator", 0, dumpTreeEitherLevel() >= 3);
-}
-
-void V3Instrumentation::instrumentationFix(AstNetlist* nodep, size_t configIndexFix, size_t namingIndex, bool instDone) {
-    UINFO(2, __FUNCTION__ << ": " << endl);
-    { Fix{nodep, configIndexFix, namingIndex, instDone}; }
-    V3Global::dumpCheckGlobalTree("instrumentationFix", 0, dumpTreeEitherLevel() >= 3);
-}
-
 void V3Instrumentation::findTargets(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { InstrumentationTargetFinder{nodep}; }
     V3Global::dumpCheckGlobalTree("instrumentationFinder", 0, dumpTreeEitherLevel() >= 3);
+}
+
+void V3Instrumentation::instrument(AstNetlist* nodep) {
+    UINFO(2, __FUNCTION__ << ": " << endl);
+    { InstrumentationFunction{nodep}; }
+    V3Global::dumpCheckGlobalTree("instrumentationFunction", 0, dumpTreeEitherLevel() >= 3);
 }

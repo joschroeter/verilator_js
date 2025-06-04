@@ -27,6 +27,22 @@
 
 //######################################################################
 
+// Forward declaration of InstrumentationTarget
+struct InstrumentationTarget {
+    int m_faultcase;
+    string m_instrumentationfunc;
+    AstVar* m_varp;
+    AstVar* m_instVarp;
+    AstModule* m_modulep;
+    AstModule* m_instModulep;
+    AstModule* m_topModulep;
+    AstModule* m_pointingModulep;
+    AstCell* m_cellp;
+    bool m_found = false;
+    bool m_done = false;
+    bool m_multipleCellps = false;
+};
+
 class V3Config final {
 public:
     static void addCaseFull(const string& file, int lineno);
@@ -40,14 +56,7 @@ public:
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
     static void addInstrumentationConfigs(FileLine *fl, const string& instrumentationfunc,
                                           int faultcase, const string& target);
-    static void addInstrumentationConfigs(AstVar* varp, AstVar* instVarp, const string& target);
-    static void addInstrumentationConfigs(AstModule* modulep, AstModule* instModulep, const string& target);
-    static void addInstrumentationConfigs(AstCell* cellp, const string& target);
-    static void addInstrumentationConfigs(AstAssignW* assignp, const string& target);
-    static bool findByPrefix(const string& prefix);
-    static bool hasFullName(AstVar* nodep, const string& fullname);
-    static bool hasFullName(AstModule* nodep, const string& fullname);
-    static bool hasFullName(AstCell* nodep, const string& fullname);
+    static std::unordered_map<string, InstrumentationTarget>& getInstrumentationConfigs();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);
     static void addProfileData(FileLine* fl, const string& model, const string& key,

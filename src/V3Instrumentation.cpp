@@ -50,14 +50,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
 
     // METHODS
     //----------------------------------------------------------------------------------
-    AstModule* getMapEntryInstModule(const std::string& key) {
-        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
-        if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
-            return instrumentationConfigs->second.m_instModulep;
-        } else {
-            return nullptr;
-        }
-    }
+    // Find the module pointer in the netlist that matches the given module pointer
     AstModule* findModp(AstNetlist* netlist, AstModule* modp) {
         for(AstNode* n = netlist->op1p(); n; n = n->nextp()) {
             if(VN_IS(n, Module) && VN_CAST(n, Module) == modp) {
@@ -66,6 +59,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return nullptr;
     }
+    // Return if the found flag is set for a given prefix
     bool isFound(const string& prefix) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -78,6 +72,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
+    // Check if the a key in the map has the given prefix
     bool keyHasPrefix(const string& prefix) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -90,6 +85,8 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
+    // Checks if the given string, including a Module node name, exactly exists as a target string in the instrumentation config map.
+    // Depending on the position, it checks for the relevant or pointing part of the key.
     bool keyHasFullName(AstModule* modulep, const std::string& position, const std::string& fullname) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -115,6 +112,8 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
+    // Checks if the given string, including a Cell node name, exactly exists as a target string in the instrumentation config map.
+    // Since we want to check relevant keys we remove the last two parts of the key. (Module and variable name)
     bool  keyHasFullName(AstCell* cellp, const std::string& fullname) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -129,10 +128,12 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
+    // Checks if the given string, including a Var node name, exactly exists as a target string in the instrumentation config map.
     bool keyHasFullName(AstVar* nodep, const string& fullname) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         return instrumentationConfigs.find(fullname) != instrumentationConfigs.end();
     }
+    // Helper Function to split a string by '.' and return a vector of tokens
     std::vector<std::string> split(const std::string& str) {
         std::vector<std::string> tokens;
         std::string token;
@@ -142,6 +143,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return tokens;
     }
+    // Check if the multipleCellps flag is set for the given target
     bool hasMultiple(const std::string& target) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -157,6 +159,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
+    // Fill the original module pointer and the instrumented module pointer in the instrumentation config map
     void addInstrumentationConfig(AstModule* modulep, AstModule* instModulep, const string& target) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -174,6 +177,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
             }
         }
     }
+    // Fill the module pointer in the instrumentation config map
     void addInstrumentationConfig(AstModule* modulep, const string& moduleType, const string& target) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -201,6 +205,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
             }
         }
     }
+    // Fill the cell pointer in the instrumentation config map
     void addInstrumentationConfig(AstCell* cellp, const string& target) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -216,6 +221,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
             }
         }
     }
+    // Fill the variable pointer in the instrumentation config map
     void addInstrumentationConfig(AstVar* varp, AstVar* instVarp, const string& target) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         auto it = instrumentationConfigs.find(target);
@@ -226,6 +232,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
             v3error("Instrumentation target not found! ... Note: " << target);
         }
     }
+    // Set the found flag
     void setFound(const string& target) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         auto it = instrumentationConfigs.find(target);
@@ -233,7 +240,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
             it->second.m_found = true;
         }
     }
-
+    // Set the multipleCellps flag
     void setMultiple(const string& prefix) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -247,6 +254,27 @@ class InstrumentationTargetFinder final : public VNVisitor {
 
     // VISITORS
     //----------------------------------------------------------------------------------
+
+    /*
+    ASTMODULE VISITOR FUNCTION:
+    Iterates over the existing module nodes in the netlist.
+    For the first module in the netlist the node name is checked if it is at the first position in the string.
+    If not an error is thown, otherwise the modules is checked for an already existing INSTRUMENT parameter.
+    If there is no INSTRUMENT parameter present we add it to the module. This parameter is used to control the instrumentation of the target.
+    The module is then added to the map of the instrumentation configs as the top module.
+    Additionally the hierarchy the function viewed is currently add is initialized with the module name.
+    This module hierarchy is used to identify the correct target path in the netlist.
+    The function iterates over the children of the module, with the Cells and Vars beeing the relevant targets.
+
+    After the iteration of the children the m_modp variable needs to be set by the Cell visitor to continue or there needs no suitable cell to be found.
+    (See CELL VISITOR FUNCTION & VAR VISITOR FUNCTION)
+    Since the module from the m_modp can appear earlier in the tree the fundModp function is used to iterate over the netlift from the beginning to find the module.
+    The module node displayed by the m_modp variable is then checked if this is the module containing the target variable (relevant module) or if it the module
+    containing the cell pointing to the relevant module (pointing module).
+    If the module node suits one of these two conditions the module nodes are added to the instrumentation configs map.
+    Independetly from these conditions the INSTRUMENT parameter is added to the module nodes in the target path.
+    This parameter is used to control the instrumentation of the target.
+    */
     void visit(AstModule* nodep) {
         bool alreadyParam = false;
         if(m_initialModule){
@@ -322,6 +350,22 @@ class InstrumentationTargetFinder final : public VNVisitor {
         m_foundCell = false;
     }
 
+    /*
+    ASTCELL VISITOR FUNCTION:
+    This cell visitor function is called if the module visitor function found a module that matches the target string from the config.
+    The first function call should be when visiting the initial module in the netlist.
+    When a cell is found that matches the target string and is not marked as found, the current hierarchy is updated and the cell marked as found.
+    Additionally, if this is the cell in the initial module, the initial module flag is set to false.
+    The in the current module existing cells are checked if there are multiple cells linking to the next module in the target string.
+    After that the m_modp is updated to match the cell's module pointer, which is needed for the next call of the module visitor.
+    Next the pin for the INSTRUMENT parameter is added to the cell.
+    This parameter is added either as a constant or as a reference, depending on the traversal stage.
+    If there are multiple cells linking to the next module in the target string, the multiple flag is set in the instrumentation config map.
+    For the inistial module the found cell is then added to the instrumentation configuration map with the current hierarchy as the target path.
+    Otherwise the cell is added to the instrumentation configuration map, when the current hierarchy with the cell name fully matches a target path,
+    with the last two entrances removed (Module, Var).
+    This function ensures that the correct cells in the design hierarchy are instrumented and tracked, supporting both unique and repeated module instances.
+    */
     void visit(AstCell* nodep) {
         int pinnum = 0;
         if (m_initialModule && keyHasPrefix(m_currentHierarchy + "." + nodep->name()) && !isFound(m_currentHierarchy + "." + nodep->name())) {
@@ -366,8 +410,15 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
     }
 
+    /*
+    ASTVAR VISITOR FUNCTION:
+    The var visitor function is used to find the variable that matches the target string from the config.
+    This is only done if the Cell visitor does not find a matching cell in the current module of the target hierarchy.
+    Since we therefore know that we will not traverse any further in the hierarchy of the model, we can check for this variable.
+    If a variable is found, with its name added to the current hierarchy, that siuts the target string, an edited version and the original version
+    are added to the instrumentation config map.
+    */
     void visit(AstVar* nodep) {
-        // Visit all vars and add instrumentation
         if(!m_foundCell && keyHasFullName(nodep, m_currentHierarchy + "." + nodep->name())) {
             AstVar* varp = nodep->cloneTree(false);
             varp->name("tmp_" + nodep->name());
@@ -415,6 +466,8 @@ class InstrumentationFunction final : public VNVisitor {
     AstPort* m_orig_portp = nullptr;
 
     // METHODS
+    //----------------------------------------------------------------------------------
+    // Get the Cell nodep pointer from the configuration map for the given key
     AstCell* getMapEntryCell(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -423,6 +476,7 @@ class InstrumentationFunction final : public VNVisitor {
             return nullptr;
         }
     }
+    // Get the instrumented Module node pointer from the configuration map for the given key
     AstModule* getMapEntryInstModule(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -431,6 +485,7 @@ class InstrumentationFunction final : public VNVisitor {
             return nullptr;
         }
     }
+    // Get the Module node pointer pointing to the instrumented/original module from the configuration map for the given key
     AstModule* getMapEntryPointingModule(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if (instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -439,6 +494,7 @@ class InstrumentationFunction final : public VNVisitor {
             return nullptr;
         }
     }
+    // Get the instrumented variable node pointer from the configuration map for the given key
     AstVar* getMapEntryInstVar(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -447,6 +503,7 @@ class InstrumentationFunction final : public VNVisitor {
             return nullptr;
         }
     }
+    // Get the original variable node pointer from the configuration map for the given key
     AstVar* getMapEntryVar(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -455,6 +512,7 @@ class InstrumentationFunction final : public VNVisitor {
             return nullptr;
         }
     }
+    // Check if the given module node pointer is an instrumented module entry in the configuration map for the given key
     bool isInstModEntry(AstModule* nodep, const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end() && instrumentationConfigs->second.m_instModulep == nodep) {
@@ -463,6 +521,7 @@ class InstrumentationFunction final : public VNVisitor {
             return false;
         }
     }
+    // Check if the given module node pointer is the top module entry in the configuration map
     bool isTopModEntry(AstModule* nodep) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -472,6 +531,7 @@ class InstrumentationFunction final : public VNVisitor {
         }
         return false;
     }
+    // Check if the given module node pointer is the pointing module entry in the configuration map
     bool isPointingModEntry(AstModule* nodep) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -481,15 +541,17 @@ class InstrumentationFunction final : public VNVisitor {
         }
         return false;
     }
+    // Check if the given module node pointer has already been instrumented/done flag has been set
     bool isDone(AstModule* nodep) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
             if (nodep == it->second.m_instModulep) {
-                return it->second.m_instModulep;
+                return it->second.m_done;
             }
         }
         return true;
     }
+    // Check if the multipleCellps flag is set for the given key in the configuration map
     bool hasMultiple(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if(instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -498,6 +560,7 @@ class InstrumentationFunction final : public VNVisitor {
             return false;
         }
     }
+    // Get the fault case for the given key in the configuration map
     int getMapEntryFaultCase(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if (instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -506,6 +569,7 @@ class InstrumentationFunction final : public VNVisitor {
             return -1;
         }
     }
+    // Get the instrumentation function name for the given key in the configuration map
     string getMapEntryFunction(const std::string& key) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs().find(key);
         if (instrumentationConfigs != V3Config::getInstrumentationConfigs().end()) {
@@ -514,6 +578,7 @@ class InstrumentationFunction final : public VNVisitor {
             return "";
         }
     }
+    // Set the done flag for the given module node pointer in the configuraiton map
     void setDone(AstModule* nodep) {
         auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
@@ -524,8 +589,13 @@ class InstrumentationFunction final : public VNVisitor {
     }
 
     // Visitors
+    //----------------------------------------------------------------------------------
+
+    /*
+    ASTNETLIST VISITOR FUNCTION:
+    Loop over map entrances for module nodes and add them to the tree
+    */
     void visit(AstNetlist* nodep) {
-        /* Loop over map entrances for module nodes and add them to the tree */
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
         for(auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
             nodep->addModulesp(it->second.m_instModulep);
@@ -534,15 +604,27 @@ class InstrumentationFunction final : public VNVisitor {
             m_assignw = false;
         }
     }
-    
+
+    /*
+    ASTMODULE VISITOR FUNCTION:
+    This function is called for each module node in the netlist.
+    It checks if the module node is part of the instrumentation configuratio map.
+    Depending on the type of the module node (Instrumented, Top, Pointing, or Original),
+    it performs different actions:
+        - If the module is an instrumented module entry and has not been done, it creates a new task for the instrumentation function,
+          adds the temporary variable, and creates a task reference to the instrumentation function.
+        - If the module is a pointing module or a top module and has no multiple cellps, it checks the cell for the target key and counts the pins.
+          This pin count is used in the CELL VISITOR FUNCTION to set a siutable pin number for the INSTRUMENT parameter. 
+          Look there fore further information.
+        - If the module is a pointing module and has multiple cellps, it creates a begin block with a conditional statement to select between the instrumented and original cell.
+          Additionally like in the previous case, the pin count is used to set a suitable pin number for the INSTRUMENT parameter.\
+    Since the cell which need to be edited are located not in the original module, but in the pointing/top module, the current_module_cell_check variable is set to the
+    module visited by the function and fulfilling this condition.
+    */
     void visit(AstModule* nodep) {
-        /*
-        Visit every instrumented module and crosscheck with the map module entrances.
-        If the instrumented module is in the map, make the relevant changes to the module.
-        */
         m_tmp_varp = getMapEntryInstVar(m_targetKey);
         m_orig_varp = getMapEntryVar(m_targetKey);
-        if(isInstModEntry(nodep, m_targetKey) && isDone(nodep)) {
+        if(isInstModEntry(nodep, m_targetKey) && !isDone(nodep)) {
             m_current_module = nodep;
 
             m_taskp = new AstTask(nodep->fileline(), getMapEntryFunction(m_targetKey), nullptr);
@@ -563,6 +645,7 @@ class InstrumentationFunction final : public VNVisitor {
             m_taskrefp->taskp(m_taskp);
             m_alwaysp = new AstAlways(nodep->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr);
             nodep->addStmtsp(m_alwaysp);
+            setDone(nodep);
             iterateChildren(nodep);
         } else if((isPointingModEntry(nodep) || isTopModEntry(nodep)) && !hasMultiple(m_targetKey)) {
             m_current_module_cell_check = nodep;
@@ -570,7 +653,6 @@ class InstrumentationFunction final : public VNVisitor {
             for(AstNode* n = instCellp->pinsp(); n; n = n->nextp()) { m_pinnum++; }
             iterateChildren(nodep);
         } else if (isPointingModEntry(nodep) && hasMultiple(m_targetKey)) {
-            std::cout << "Multiple cells" << std::endl;
             m_current_module_cell_check = nodep;
             AstCell* instCellp = getMapEntryCell(m_targetKey)->cloneTree(false);
             instCellp->modp(getMapEntryInstModule(m_targetKey));
@@ -580,16 +662,27 @@ class InstrumentationFunction final : public VNVisitor {
                                             new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"),
                                             m_instBeginp,
                                             new AstBegin(nodep->fileline(), "", getMapEntryCell(m_targetKey)->cloneTree(false), true, false));
-            iterateChildren(m_instBeginp);
+            
             nodep->addStmtsp(genifp);
+            iterateChildren(m_instBeginp);
             iterateChildren(nodep);
         }
         m_current_module = nullptr;
         m_current_module_cell_check = nullptr;
         m_alwaysp = nullptr;
         m_taskrefp = nullptr;
+        m_instBeginp = nullptr;
     }
 
+    /*
+    ASTPORT VISITOR FUNCTION:
+    When the target variable is an ouput port, this function is called.
+    If no port is added yet, two new ports are added to the current module.
+    This enabled the instrumentation of the ouput port and link this instrumented port to the modules reading from the original port.
+    The idea behind this function is to set the instrumented port on the position of the original port in the module and move the original port
+    to another pin number.
+    This should ensure the linking over the name and the port position in the module should work.
+    */
     void visit(AstPort* nodep) {
         if(m_current_module != nullptr && m_orig_varp->direction() == VDirection::OUTPUT && nodep->name() == m_orig_varp->name() && !m_addedport) {
             m_orig_portp = nodep->cloneTree(false);
@@ -601,11 +694,20 @@ class InstrumentationFunction final : public VNVisitor {
         }
     }
 
+    /*
+    ASTCELL VISITOR FUNCTION:
+    This function visits the cell nodes in the module pointing to the instrumented module.
+    Depending if hasMultiple is set for the target key, two different actions are performed:
+        - If hasMultiple is false, the cell is modified to link to the instrumented module and the children are iterated.
+          This ensures that the instrumented mopdule is used in the cell.
+          Also if the original variable is an output variable, the children of this cell nodes are visited by the ASTPIN VISITOR FUNCTION.
+        - If hasMultiple is true, the cell is unlinked from the back and deleted.
+          This ensures that the cell is not used anymore in the module, and the conditional statment deciding between the instrumented
+          and the original cell can be created/used.
+    A third action is performed if the variable beeing instrumented is an ouput variable.
+    In this case the children of this cell nodes are visited by the ASTPIN VISITOR FUNCTION.
+    */
     void visit(AstCell* nodep) {
-        /*
-        Check if firstCellp in Map is set. If this is the case, change the link of this cell to the correct instrumented Modul.deleter
-        If not, add conditional logic to select between instrumented and original module depending on Parameter INSTRUMENT
-        */
         if(m_current_module_cell_check != nullptr && !hasMultiple(m_targetKey) && nodep == getMapEntryCell(m_targetKey)) {
             nodep->modp(getMapEntryInstModule(m_targetKey));
             if(m_orig_varp->direction() == VDirection::OUTPUT) {
@@ -619,12 +721,21 @@ class InstrumentationFunction final : public VNVisitor {
         }
     }
 
+    /*
+    ASTPIN VISITOR FUNCTION:
+    The function is used to change the pin name of the original variable to the instrumented variable name.
+    This is done to ensure that the pin is correctly linked to the instrumented variable in the cell.
+    */
     void visit(AstPin* nodep) {
         if(nodep->name() == m_orig_varp->name()) {
             nodep->name(m_tmp_varp->name());
         }
     }
 
+    /*
+    ASTTASK VISITOR FUNCTION:
+    The function is used to further specify the task node.
+    */
     void visit(AstTask* nodep) {
         if(nodep == m_taskp && m_current_module != nullptr) {
             AstVar* fi_id = nullptr;
@@ -649,6 +760,10 @@ class InstrumentationFunction final : public VNVisitor {
         }
     }
 
+    /*
+    ASTALWAYS VISITOR FUNCTION:
+    The function is used to add the task reference node to the always node and further specify the always node.
+    */
     void visit(AstAlways* nodep) {
         if(nodep == m_alwaysp && m_current_module != nullptr) {
             AstBegin* newBegin = nullptr;
@@ -663,6 +778,10 @@ class InstrumentationFunction final : public VNVisitor {
         iterateChildren(nodep);
     }
 
+    /*
+    ASTTASKREF VISITOR FUNCTION:
+    The function is used to further specify the task reference node called by the always node.
+    */
     void visit(AstTaskRef* nodep) {
         if(nodep == m_taskrefp && m_current_module != nullptr) {
             AstConst* constp_id = nullptr;
@@ -678,6 +797,11 @@ class InstrumentationFunction final : public VNVisitor {
         }
     }
 
+    /*
+    ASTASSIGNW VISITOR FUNCTION:
+    Sets the m_assignw flag to true if the current module is not null.
+    Necessary for the AstParseRef visitor function to determine if the current node is part of an assignment.
+    */
     void visit(AstAssignW* nodep) {
         if(m_current_module != nullptr) {
             m_assignw = true;
@@ -685,6 +809,15 @@ class InstrumentationFunction final : public VNVisitor {
         }
     }
 
+    /*
+    ASTPARSE REF VISITOR FUNCTION:
+    The function is used to change the parseref nodes to link to the instrumented variable instead of the original variable.
+    Depending on the direction of the original variable, different actions are performed:
+        - If the original variable is not an output variable and the assignment is true, the parseref node is changed to link to the instrumented variable.
+          This ensures that the instrumented variable is used in the assignment.
+        - If the original variable is an input variable, every parseref node is changed to link to the instrumented variable.
+          This ensures that the instrumented variable is used as the new input.
+    */
     void visit(AstParseRef* nodep) {
         if(m_current_module != nullptr && m_orig_varp != nullptr && nodep->name() == getMapEntryVar(m_targetKey)->name()) {
             if(m_assignw && m_orig_varp->direction() != VDirection::OUTPUT) {
@@ -706,12 +839,15 @@ public:
 
 //##################################################################################
 // Instrumentation class functions
+
+// Function to find instrumentation targets and additional information for the instrumentation process
 void V3Instrumentation::findTargets(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { InstrumentationTargetFinder{nodep}; }
     V3Global::dumpCheckGlobalTree("instrumentationFinder", 0, dumpTreeEitherLevel() >= 3);
 }
 
+// Function for the actual instrumentation process
 void V3Instrumentation::instrument(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { InstrumentationFunction{nodep}; }

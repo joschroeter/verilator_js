@@ -54,7 +54,7 @@ public:
     static void addIgnoreMatch(V3ErrorCode code, const string& filename, const string& contents,
                                const string& match);
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
-    static void addInstrumentationConfigs(FileLine *fl, const string& instrumentationfunc,
+    static void addInstrumentationConfigs(FileLine* fl, const string& instrumentationfunc,
                                           int faultcase, const string& target);
     static std::unordered_map<string, InstrumentationTarget>& getInstrumentationConfigs();
     static void addModulePragma(const string& module, VPragmaType pragma);

@@ -270,7 +270,7 @@ public:
     // ACCESSORS
     void name(const string& name) override { m_name = name; }
     string origName() const override { return m_origName; }
-    void setOrigName (const string& name) override { m_origName = name; };
+    void setOrigName(const string& name) override { m_origName = name; };
     string someInstanceName() const VL_MT_SAFE { return m_someInstanceName; }
     void someInstanceName(const string& name) { m_someInstanceName = name; }
     bool inLibrary() const { return m_inLibrary; }

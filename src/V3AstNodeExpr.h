@@ -5723,6 +5723,7 @@ public:
 class AstVarRef final : public AstNodeVarRef {
     // A reference to a variable (lvalue or rvalue)
     bool m_instrumented : 1;
+
 public:
     // This form only allowed post-link because output/wire compression may
     // lead to deletion of AstVar's

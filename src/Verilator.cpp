@@ -150,7 +150,7 @@ static void process() {
         }
 
         // Instrument Design with the configurations given in .vlt file
-        if(v3Global.opt.instrument()) {
+        if (v3Global.opt.instrument()) {
             v3Global.dpi(true);
             V3Instrumentation::findTargets(v3Global.rootp());
             V3Instrumentation::instrument(v3Global.rootp());

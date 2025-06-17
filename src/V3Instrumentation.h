@@ -30,4 +30,4 @@ public:
     static void instrument(AstNetlist* nodep) VL_MT_DISABLED;
 };
 
-#endif // Guard
+#endif  // Guard

@@ -652,10 +652,9 @@ void V3Config::addInline(FileLine* fl, const string& module, const string& ftask
     }
 }
 
-void V3Config::addInstrumentationConfigs(FileLine *fl, const string& instrumentationfunc,
+void V3Config::addInstrumentationConfigs(FileLine* fl, const string& instrumentationfunc,
                                          int faultcase, const string& target) {
-    V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, faultcase,
-                                                    target);
+    V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, faultcase, target);
 }
 
 std::unordered_map<string, InstrumentationTarget>& V3Config::getInstrumentationConfigs() {

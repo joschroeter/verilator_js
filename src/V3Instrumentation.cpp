@@ -40,8 +40,8 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 //##################################################################################
 // Instrumentation class finder
 class InstrumentationTargetFinder final : public VNVisitor {
-    string m_currentHierarchy;
-    string m_moduleHierarchy;
+    string m_currHier;
+    string m_modHier;
     AstNetlist* m_netlist = nullptr;
     AstNodeModule* m_modp = nullptr;
     AstNodeModule* m_finalModule = nullptr;
@@ -60,7 +60,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
     }
     // Return if the found flag is set for a given prefix
     bool isFound(const string& prefix) {
-        const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();
+        const auto& instrCfg = V3Config::getInstrumentationConfigs();
         for (auto it = instrumentationConfigs.begin(); it != instrumentationConfigs.end(); ++it) {
             const std::string& key = it->first;
 
@@ -236,22 +236,22 @@ class InstrumentationTargetFinder final : public VNVisitor {
     ASTMODULE VISITOR FUNCTION:
     Iterates over the existing module nodes in the netlist.
     For the first module in the netlist the node name is checked if it is at the first position in
-    the string. If not an error is thown, otherwise the modules is checked for an already existing
+    the string. If not an error is thrown, otherwise the module is checked for an already existing
     INSTRUMENT parameter. If there is no INSTRUMENT parameter present we add it to the module. This
     parameter is used to control the instrumentation of the target. The module is then added to the
     map of the instrumentation configs as the top module. Additionally the hierarchy the function
-    viewed is currently add is initialized with the module name. This module hierarchy is used to
+    viewed is currently added is initialized with the module name. This module hierarchy is used to
     identify the correct target path in the netlist. The function iterates over the children of the
     module, with the Cells and Vars beeing the relevant targets.
 
     After the iteration of the children the m_modp variable needs to be set by the Cell visitor to
     continue or there needs no suitable cell to be found. (See CELL VISITOR FUNCTION & VAR VISITOR
-    FUNCTION) Since the module from the m_modp can appear earlier in the tree the fundModp function
-    is used to iterate over the netlift from the beginning to find the module. The module node
+    FUNCTION) Since the module from the 'm_modp' can appear earlier in the tree the 'fundModp' function
+    is used to iterate over the netlist from the beginning to find the module. The module node
     displayed by the m_modp variable is then checked if this is the module containing the target
     variable (relevant module) or if it the module containing the cell pointing to the relevant
     module (pointing module). If the module node suits one of these two conditions the module nodes
-    are added to the instrumentation configs map. Independetly from these conditions the INSTRUMENT
+    are added to the instrumentation configs map. Independently from these conditions the INSTRUMENT
     parameter is added to the module nodes in the target path. This parameter is used to control
     the instrumentation of the target.
     */
@@ -584,7 +584,7 @@ class InstrumentationFunction final : public VNVisitor {
 
     /*
     ASTNETLIST VISITOR FUNCTION:
-    Loop over map entrances for module nodes and add them to the tree
+    Loop over map entries for module nodes and add them to the tree
     */
     void visit(AstNetlist* nodep) {
         const auto& instrumentationConfigs = V3Config::getInstrumentationConfigs();

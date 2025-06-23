@@ -29,18 +29,18 @@
 
 // Forward declaration of InstrumentationTarget
 struct InstrumentationTarget {
-    int m_faultcase;
-    string m_instrumentationfunc;
-    AstVar* m_varp;
-    AstVar* m_instVarp;
-    AstModule* m_modulep;
-    AstModule* m_instModulep;
-    AstModule* m_topModulep;
-    AstModule* m_pointingModulep;
-    AstCell* m_cellp;
-    bool m_found = false;
-    bool m_done = false;
-    bool m_multipleCellps = false;
+    int faultcase;
+    string instrumentationfunc;
+    AstVar* varp;
+    AstVar* instVarp;
+    AstModule* modulep;
+    AstModule* instModulep;
+    AstModule* topModulep;
+    AstModule* pointingModulep;
+    AstCell* cellp;
+    bool found = false;
+    bool done = false;
+    bool multipleCellps = false;
 };
 
 class V3Config final {

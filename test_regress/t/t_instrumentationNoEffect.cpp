@@ -8,6 +8,7 @@
 
 #include <verilated.h>
 #include <verilated_vcd_c.h>
+
 #include <fstream>
 
 #include VM_PREFIX_INCLUDE
@@ -22,7 +23,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<VM_PREFIX> top{new VM_PREFIX{"top"}};
 
     std::ofstream logFile("obj_vlt/t_instrumentationNoEffect/simulation_output.log");
-    if(!logFile.is_open()) {
+    if (!logFile.is_open()) {
         printf("Error: Could not open log file\n");
         return 1;
     }
@@ -32,7 +33,9 @@ int main(int argc, char** argv) {
     while (main_time <= 100) {
         top->top__fiinst__1__02Ea = !top->top__fiinst__1__02Ea;
         top->eval();
-        logFile << "$time: " << main_time << " | "<< "a: " << static_cast<int>(top->top__fiinst__1__02Ea) << " | "<< "y: " << static_cast<int>(top->tmp_y_port) << std::endl;
+        logFile << "$time: " << main_time << " | "
+                << "a: " << static_cast<int>(top->top__fiinst__1__02Ea) << " | "
+                << "y: " << static_cast<int>(top->tmp_y_port) << std::endl;
         ++main_time;
     }
     top->final();

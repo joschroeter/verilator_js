@@ -11,7 +11,9 @@ import vltest_bootstrap
 
 test.scenarios('simulator')
 
-test.compile(make_top_shell=False, make_main=False, v_flags2=["--trace --exe", test.pli_filename, test.name + ".vlt"])
+test.compile(make_top_shell=False,
+             make_main=False,
+             v_flags2=["--trace --exe", test.pli_filename, test.name + ".vlt"])
 
 test.execute()
 

@@ -6,4 +6,4 @@
 
 `verilator_config
 
-instrument -model "instrument_var" -id "1" -target ".top.y"
+instrument -model "instrument_var" -id 1 -target "top.y"

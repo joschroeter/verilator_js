@@ -12,6 +12,8 @@ import vltest_bootstrap
 test.scenarios('linter')
 test.top_filename = "t/t_instrumentation.v"
 
-test.lint(v_flags2=["t_instrumentation_bad_var.vlt"], fails=True, expect_filename=test.golden_filename)
+test.lint(v_flags2=["t_instrumentation_bad_var.vlt"],
+          fails=True,
+          expect_filename=test.golden_filename)
 
 test.passes()

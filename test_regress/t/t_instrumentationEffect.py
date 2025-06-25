@@ -17,7 +17,9 @@ dpi_filename = "t/t_instrumentationDPI.cpp"
 vlt_filename = "t/" + test.name + ".vlt"
 log_filename = "obj_vlt/t_instrumentationEffect/simulation_output.log"
 
-test.compile(make_top_shell=False, make_main=False, v_flags2=["--trace --exe", sim_filename, vlt_filename, dpi_filename])
+test.compile(make_top_shell=False,
+             make_main=False,
+             v_flags2=["--trace --exe", sim_filename, vlt_filename, dpi_filename])
 test.execute()
 
 test.files_identical(log_filename, test.golden_filename)

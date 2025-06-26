@@ -224,7 +224,7 @@ class AstNodeModule VL_NOT_FINAL : public AstNode {
     // @astgen op2 := stmtsp : List[AstNode]
     // @astgen op3 := activesp : List[AstActive]
     string m_name;  // Name of the module
-    string m_origName;  // Name of the module, ignoring name() changes, for dot lookup
+    const string m_origName;  // Name of the module, ignoring name() changes, for dot lookup
     string m_someInstanceName;  // Hierarchical name of some arbitrary instance of this module.
                                 // Used for user messages only.
     int m_level = 0;  // 1=top module, 2=cell off top module, ...
@@ -270,7 +270,6 @@ public:
     // ACCESSORS
     void name(const string& name) override { m_name = name; }
     string origName() const override { return m_origName; }
-    void setOrigName(const string& name) override { m_origName = name; };
     string someInstanceName() const VL_MT_SAFE { return m_someInstanceName; }
     void someInstanceName(const string& name) { m_someInstanceName = name; }
     bool inLibrary() const { return m_inLibrary; }

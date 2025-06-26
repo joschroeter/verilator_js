@@ -38,7 +38,7 @@ struct InstrumentationTarget {
     AstModule* topModulep;
     AstModule* pointingModulep;
     AstCell* cellp;
-    bool found = false;
+    bool processed = false;
     bool done = false;
     bool multipleCellps = false;
 };

@@ -542,7 +542,7 @@ class V3ConfigResolver final {
     std::unordered_map<string, int> m_hierWorkers;
     FileLine* m_hierWorkersFileLine = nullptr;
     FileLine* m_profileFileLine = nullptr;
-    std::unordered_map<string, InstrumentationTarget> m_instrumentationConfigs;
+    std::unordered_map<string, InstrumentationTarget> instrCfg;
 
     V3ConfigResolver() = default;
     ~V3ConfigResolver() = default;
@@ -590,13 +590,42 @@ public:
         return it->second;
     }
     FileLine* getProfileDataFileLine() const { return m_profileFileLine; }  // Maybe null
+    // Helper for adding targets to the instrumentation config map
+    std::pair<string, string> splitPrefixAndVar(const string& target) {
+        auto pos = target.rfind('.');
+        if (pos == string::npos) {
+            // No prefix, return error
+        }
+        string prefix = target.substr(0, pos);
+        string varTarget = target.substr(pos + 1); // Nochmal schauen ob nicht exeption oder aehnlich
+        return {prefix, varTarget};
+    }
     // Add the instrumentation config data to the map to create the initial map (Used in verilog.y)
-    void addInstrumentationConfigs(FileLine* fl, const string& instFunction, int faultcase,
+    void addInstrumentationConfigs(FileLine* fl, const string& instrFunction, int instrID,
                                    const string& target) {
-        m_instrumentationConfigs[target] = InstrumentationTarget{faultcase, instFunction};
+        // Implement custom iterator to remove the last part of the target and insert it into the vector of the map
+        // If the target string is the same as one already in the map, push the var to the vector
+        auto [prefix, varTarget] = splitPrefixAndVar(target);
+        //const string& prefix = splitResult.first;
+        //const string& varTarget = splitResult.second;
+        auto it = instrCfg.find(prefix);
+        if (it != instrCfg.end()) {
+            it->second.instrID.push_back(instrID);
+            it->second.instrFunc.push_back(instrFunction);
+            it->second.varTargets.push_back(varTarget);
+        } else {
+        // Create a new entry in the map
+            InstrumentationTarget newTarget;
+            newTarget.instrID.push_back(instrID);
+            newTarget.instrFunc.push_back(instrFunction);
+            newTarget.varTargets.push_back(varTarget);
+            instrCfg[prefix] = std::move(newTarget);
+        }
+
+        //instrCfg[target] = InstrumentationTarget{faultcase, instFunction};
     }
     std::unordered_map<string, InstrumentationTarget>& getInstrumentationConfigs() {
-        return m_instrumentationConfigs;
+        return instrCfg;
     }
 };
 
@@ -653,8 +682,8 @@ void V3Config::addInline(FileLine* fl, const string& module, const string& ftask
 }
 
 void V3Config::addInstrumentationConfigs(FileLine* fl, const string& instrumentationfunc,
-                                         int faultcase, const string& target) {
-    V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, faultcase, target);
+                                         int instrID, const string& target) {
+    V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, instrID, target);
 }
 
 std::unordered_map<string, InstrumentationTarget>& V3Config::getInstrumentationConfigs() {

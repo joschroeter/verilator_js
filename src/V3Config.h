@@ -29,12 +29,15 @@
 
 // Forward declaration of InstrumentationTarget
 struct InstrumentationTarget {
-    int faultcase;
-    string instrumentationfunc;
-    AstVar* varp;
-    AstVar* instVarp;
+    std::vector<int> instrID;
+    std::vector<string> instrFunc;
+    std::vector<string> varTargets;
+    std::vector<AstVar*> origVarps;
+    std::vector<AstVar*> instrVarps;
+    //AstVar* varp;
+    //AstVar* instVarp;
     AstModule* modulep;
-    AstModule* instModulep;
+    AstModule* instrModulep;
     AstModule* topModulep;
     AstModule* pointingModulep;
     AstCell* cellp;
@@ -55,7 +58,7 @@ public:
                                const string& match);
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
     static void addInstrumentationConfigs(FileLine* fl, const string& instrumentationfunc,
-                                          int faultcase, const string& target);
+                                          int instrID, const string& target);
     static std::unordered_map<string, InstrumentationTarget>& getInstrumentationConfigs();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);

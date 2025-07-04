@@ -26,7 +26,13 @@
 #include "V3Mutex.h"
 
 //######################################################################
-
+struct LengthThenLexiographic {
+    // Used to sort strings by length, then lexicographically
+    bool operator()(const string& a, const string& b) const {
+        if (a.length() != b.length()) return a.length() < b.length();
+        return a < b;
+    }
+};
 // Forward declaration of InstrumentationTarget
 struct InstrumentationTarget {
     std::vector<int> instrID;
@@ -57,7 +63,7 @@ public:
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
     static void addInstrumentationConfigs(FileLine* fl, const string& instrumentationfunc,
                                           int instrID, const string& target);
-    static std::unordered_map<string, InstrumentationTarget>& getInstrumentationConfigs();
+    static std::map<string, InstrumentationTarget, LengthThenLexiographic>& getInstrumentationConfigs();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);
     static void addProfileData(FileLine* fl, const string& model, const string& key,

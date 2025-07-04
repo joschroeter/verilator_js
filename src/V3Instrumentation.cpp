@@ -117,22 +117,12 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
-    // Checks if the given string, including a Module node name, exactly exists as a target string
-    // in the instrumentation config map. Depending on the position, it checks for the relevant or
-    // pointing part of the key.
-    bool keyHasFullName(AstModule* modulep, const std::string& position,
-                        const std::string& fullname) {
+    // Check if the direct predecessor in the target string has been instrumented,
+    // to create the correct link between the already instrumented module and the current one.
+    bool hasPrior(AstModule* modulep, const string& target) {
         const auto& instrCfg = V3Config::getInstrumentationConfigs();
-        for (const auto& pair : instrCfg) {
-            const std::string& key = pair.first;
-            if (position == "relevant" && key == fullname) {
-                return true;
-            } else if (position == "pointing") {
-                std::string reducedKey = reduce2Depth(split(key), 2);
-                if (reducedKey == fullname) { return true; }
-            }
-        }
-        return false;
+        return instrCfg.find(reduce2Depth(split(target), 2)) != instrCfg.end() 
+                && instrCfg.find(reduce2Depth(split(target), 2))->second.processed;
     }
     // Insert the module node that includes the cell pointing to the targeted module
     // to the map
@@ -267,6 +257,19 @@ class InstrumentationTargetFinder final : public VNVisitor {
                 m_currHier = m_currHier + "." + nodep->name();
                 m_modHier = m_currHier;
                 m_finalModule = nodep;
+                if (hasPrior(nodep, m_currHier)) {
+                    auto& instrCfg = V3Config::getInstrumentationConfigs();
+                    AstModule* instrModp = instrCfg.find(reduce2Depth(split(m_currHier), 2))->second.instrModulep;
+                    editInstrData(instrModp, m_currHier);
+                    AstCell* cellp = nullptr;
+                    for (AstNode* n = instrModp->op2p(); n; n = n->nextp()) {
+                        if (VN_IS(n, Cell) && (VN_CAST(n, Cell)->modp() == nodep)) {
+                            cellp = VN_CAST(n, Cell);
+                            break;
+                        }
+                    }
+                    editInstrData(cellp, m_currHier);
+                }
                 for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                     if (n->name() == "INSTRUMENT") {
                         alreadyParam = true;

@@ -542,7 +542,7 @@ class V3ConfigResolver final {
     std::unordered_map<string, int> m_hierWorkers;
     FileLine* m_hierWorkersFileLine = nullptr;
     FileLine* m_profileFileLine = nullptr;
-    std::unordered_map<string, InstrumentationTarget> instrCfg;
+    std::map<string, InstrumentationTarget, LengthThenLexiographic> instrCfg;
 
     V3ConfigResolver() = default;
     ~V3ConfigResolver() = default;
@@ -624,7 +624,7 @@ public:
 
         //instrCfg[target] = InstrumentationTarget{faultcase, instFunction};
     }
-    std::unordered_map<string, InstrumentationTarget>& getInstrumentationConfigs() {
+    std::map<string, InstrumentationTarget, LengthThenLexiographic>& getInstrumentationConfigs() {
         return instrCfg;
     }
 };
@@ -686,7 +686,7 @@ void V3Config::addInstrumentationConfigs(FileLine* fl, const string& instrumenta
     V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, instrID, target);
 }
 
-std::unordered_map<string, InstrumentationTarget>& V3Config::getInstrumentationConfigs() {
+std::map<string, InstrumentationTarget, LengthThenLexiographic>& V3Config::getInstrumentationConfigs() {
     return V3ConfigResolver::s().getInstrumentationConfigs();
 }
 

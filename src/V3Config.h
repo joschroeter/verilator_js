@@ -34,9 +34,7 @@ struct InstrumentationTarget {
     std::vector<string> varTargets;
     std::vector<AstVar*> origVarps;
     std::vector<AstVar*> instrVarps;
-    //AstVar* varp;
-    //AstVar* instVarp;
-    AstModule* modulep;
+    AstModule* origModulep;
     AstModule* instrModulep;
     AstModule* topModulep;
     AstModule* pointingModulep;

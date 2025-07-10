@@ -153,8 +153,8 @@ static void process() {
         if (v3Global.opt.instrument()) {
             v3Global.dpi(true);
             V3Instrumentation::findTargets(v3Global.rootp());
-            V3Instrumentation::instrument(v3Global.rootp());
             V3Error::abortIfErrors();
+            V3Instrumentation::instrument(v3Global.rootp());
         }
 
         // Convert parseref's to varrefs, and other directly post parsing fixups

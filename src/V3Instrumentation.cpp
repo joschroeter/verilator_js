@@ -257,9 +257,12 @@ class InstrumentationTargetFinder final : public VNVisitor {
                 }
                 setTopMod(nodep, m_target);
                 iterateChildren(nodep);
-            } else {
-                v3error("In .vlt file defined initial MODULE in the target string could not be found! ... Node: "
-                        << nodep->name());
+            } else if (!m_foundModp && nodep->name() == "@CONST-POOL@") {
+                v3error("Verilator-configfile': could not find initial 'module' in 'module.instance.__'"
+                        " ... Target: '"
+                        << m_target << "'");
+                m_initModp = false;
+                m_error = true;
             }
         } else if (m_cellModp != nullptr && (nodep = findModp(m_netlist, VN_CAST(m_cellModp, Module))) != nullptr) {
             if (targetHasFullName(m_currHier, m_target)) {
@@ -356,7 +359,15 @@ class InstrumentationTargetFinder final : public VNVisitor {
                     //------------------
                 }
                 iterateChildren(nodep);
-            }
+            }                       
+        } else if(!m_error && !m_foundCellp) {
+             v3error("Verilator-configfile: could not find 'instance' in "
+                    "'__.instance.__' ... Target string: '"
+                    << m_target << "'");
+        } else if(!m_error && !m_foundVarp) {
+            v3error("Verilator-configfile': could not find '.var' in '__.module.var'"
+                    " ... Target: '"
+                    << m_target << "'");
         }
     }
 
@@ -453,8 +464,16 @@ class InstrumentationTargetFinder final : public VNVisitor {
                     setMultiple(m_target);
                 }
                 setCell(nodep, m_target);
-            } // Sonst Fehler!
-        } else if (targetHasPrefix(m_currHier + "." + nodep->name(), m_target)) {
+            } else if (!m_foundCellp && !VN_IS(nodep->nextp(), Cell)) {
+                v3error("Verilator-configfile': could not find initial 'instance' in "
+                    "'topModule.instance.__' ... Target string: '"
+                    << m_target << "'");
+                m_error = true;
+                m_initModp = false;
+            }
+        } else if (m_modp != nullptr && targetHasFullName(m_currHier + "." + nodep->name(), m_target)) {
+            m_foundCellp = true;
+            m_foundModp = false;
             m_currHier = m_currHier + "." + nodep->name();
             // Check if there is already a Pin
             for (AstNode* n = nodep->paramsp(); n; n = n->nextp()) {

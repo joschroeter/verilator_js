@@ -1,4 +1,0 @@
-INFORMATION: Instrumentation of a new module and instance! Therefore adding a parameter to the module and cell!
-INFORMATION: Instrumentation of a new module! Therefore fixing module link!
-%Error: Error Userinput: Userdefined variable to be instrumented in .vlt file not existent. Relevant variable: test (Possibly wrong case?)
-%Error: Exiting due to

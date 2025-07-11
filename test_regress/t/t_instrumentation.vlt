@@ -5,3 +5,5 @@
 // SPDX-License-Identifier: CC0-1.0
 
 `verilator_config
+
+instrument -model "instrument_var" -id 0 -target "top_module.a1.b1.out"

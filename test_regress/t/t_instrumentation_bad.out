@@ -1,5 +1,0 @@
-INFORMATION: Instrumentation of a new module and instance! Therefore adding a parameter to the module and cell!
-%Error: In .vlt file defined MODULE could not be found: test
-INFORMATION: Instrumentation of a new module! Therefore fixing module link!
-%Error: In .vlt file defined INSTANCE could not be found: test
-%Error: Exiting due to

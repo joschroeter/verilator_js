@@ -26,7 +26,7 @@
 #include "V3Mutex.h"
 
 //######################################################################
-struct LengthThenLexiographic {
+struct LengthThenLexiographic final {
     // Used to sort strings by length, then lexicographically
     bool operator()(const string& a, const string& b) const {
         if (a.length() != b.length()) return a.length() < b.length();
@@ -34,7 +34,7 @@ struct LengthThenLexiographic {
     }
 };
 // Forward declaration of InstrumentationTarget
-struct InstrumentationTarget {
+struct InstrumentationTarget final {
     std::vector<int> instrID;
     std::vector<string> instrFunc;
     std::vector<string> varTargets;

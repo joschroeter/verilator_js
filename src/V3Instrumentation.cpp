@@ -14,11 +14,11 @@
 //
 //*************************************************************************
 // V3Instrumentation's Transformations:
-// The instrumentation configuration map is populated with the relevant nodes, as defined by the 
-// target string specified in the instrumentation configuration within the .vlt file. 
-// Additionally, the AST (Abstract Syntax Tree) is modified to insert the necessary extra nodes 
-// required for instrumentation. 
-// Furthermore, the links between Module, Cell, and Var nodes are adjusted to ensure correct 
+// The instrumentation configuration map is populated with the relevant nodes, as defined by the
+// target string specified in the instrumentation configuration within the .vlt file.
+// Additionally, the AST (Abstract Syntax Tree) is modified to insert the necessary extra nodes
+// required for instrumentation.
+// Furthermore, the links between Module, Cell, and Var nodes are adjusted to ensure correct
 // connectivity for instrumentation purposes.
 //*************************************************************************
 
@@ -85,7 +85,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
         const auto& instrCfg = V3Config::getInstrumentationConfigs();
         auto priorTarget = reduce2Depth(split(target), 1);
         auto it = instrCfg.find(priorTarget);
-        return it != instrCfg.end() 
+        return it != instrCfg.end()
                 && it->second.processed;
     }
     bool targetHasFullName(const string& fullname, const string& target) {
@@ -203,7 +203,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
 
     // VISITORS
     //----------------------------------------------------------------------------------
-    
+
     //ASTMODULE VISITOR FUNCTION:
     //Iterates over the existing module nodes in the netlist.
     //For the first module in the netlist the node name is checked if it is at the first position in
@@ -624,8 +624,9 @@ class InstrumentationFunction final : public VNVisitor {
     //----------------------------------------------------------------------------------
     // Get the Cell nodep pointer from the configuration map for the given key
     AstCell* getMapEntryCell(const std::string& key) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.cellp;
         } else {
             return nullptr;
@@ -633,8 +634,9 @@ class InstrumentationFunction final : public VNVisitor {
     }
     // Get the instrumented Module node pointer from the configuration map for the given key
     AstModule* getMapEntryInstModule(const std::string& key) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.instrModulep;
         } else {
             return nullptr;
@@ -643,8 +645,9 @@ class InstrumentationFunction final : public VNVisitor {
     // Get the Module node pointer pointing to the instrumented/original module from the
     // configuration map for the given key
     AstModule* getMapEntryPointingModule(const std::string& key) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.pointingModulep;
         } else {
             return nullptr;
@@ -652,8 +655,9 @@ class InstrumentationFunction final : public VNVisitor {
     }
     // Get the instrumented variable node pointer from the configuration map for the given key
     AstVar* getMapEntryInstVar(const std::string& key, size_t index) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.instrVarps[index];
         } else {
             return nullptr;
@@ -661,8 +665,9 @@ class InstrumentationFunction final : public VNVisitor {
     }
     // Get the original variable node pointer from the configuration map for the given key
     AstVar* getMapEntryVar(const std::string& key,  size_t index) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.origVarps[index];
         } else {
             return nullptr;
@@ -671,8 +676,9 @@ class InstrumentationFunction final : public VNVisitor {
     // Check if the given module node pointer is an instrumented module entry in the configuration
     // map for the given key
     bool isInstModEntry(AstModule* nodep, const std::string& key) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()
             && instrCfg->second.instrModulep == nodep) {
             return true;
         } else {
@@ -705,8 +711,9 @@ class InstrumentationFunction final : public VNVisitor {
     }
     // Check if the multipleCellps flag is set for the given key in the configuration map
     bool hasMultiple(const std::string& key) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.multipleCellps;
         } else {
             return false;
@@ -714,8 +721,9 @@ class InstrumentationFunction final : public VNVisitor {
     }
     // Get the fault case for the given key in the configuration map
     int getMapEntryFaultCase(const std::string& key, size_t index) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.instrID[index];
         } else {
             return -1;
@@ -723,8 +731,9 @@ class InstrumentationFunction final : public VNVisitor {
     }
     // Get the instrumentation function name for the given key in the configuration map
     string getMapEntryFunction(const std::string& key, size_t index) {
-        const auto& instrCfg = V3Config::getInstrumentationConfigs().find(key);
-        if (instrCfg != V3Config::getInstrumentationConfigs().end()) {
+        const auto& map = V3Config::getInstrumentationConfigs();
+        const auto instrCfg = map.find(key);
+        if (instrCfg != map.end()) {
             return instrCfg->second.instrFunc[index];
         } else {
             return "";

@@ -1002,7 +1002,6 @@ public:
         m_num.width(32, false);
         dtypeSetLogicUnsized(32, m_num.widthMin(), VSigning::UNSIGNED);
     }
-    
     class Signed32 {};  // for creator type-overload selection
     AstConst(FileLine* fl, Signed32, int32_t num)  // Signed 32-bit integer of specified value
         : ASTGEN_SUPER_Const(fl)

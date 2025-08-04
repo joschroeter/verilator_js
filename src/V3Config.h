@@ -34,12 +34,15 @@ struct LengthThenLexiographic final {
     }
 };
 // Forward declaration of InstrumentationTarget
+struct InstrumentationEntry {
+    int instrID;
+    std::string instrFunc;
+    std::string varTarget;
+    AstVar* origVarps;
+    AstVar* instrVarps;
+};
 struct InstrumentationTarget final {
-    std::vector<int> instrID;
-    std::vector<string> instrFunc;
-    std::vector<string> varTargets;
-    std::vector<AstVar*> origVarps;
-    std::vector<AstVar*> instrVarps;
+    std::vector<InstrumentationEntry> entries;
     AstModule* origModulep;
     AstModule* instrModulep;
     AstModule* topModulep;

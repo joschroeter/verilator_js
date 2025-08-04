@@ -196,8 +196,13 @@ class InstrumentationTargetFinder final : public VNVisitor {
         auto& instrCfg = V3Config::getInstrumentationConfigs();
         auto it = instrCfg.find(target);
         if (it != instrCfg.end()) {
-            it->second.origVarps.push_back(varp);
-            it->second.instrVarps.push_back(instVarp);
+            for (auto& entry : it->second.entries) {
+                if (entry.varTarget == varp->name()) {
+                    entry.origVarps = varp;
+                    entry.instrVarps = instVarp;
+                    return;
+                }
+            }
         }
     }
 
@@ -554,8 +559,8 @@ class InstrumentationTargetFinder final : public VNVisitor {
         if (m_targetModp != nullptr) {
             const InstrumentationTarget& target = V3Config::getInstrumentationConfigs().find(
                 m_currHier)->second;
-            for (const std::string& var : target.varTargets) {
-                if (nodep->name() == var) {
+            for (const auto& entry : target.entries) {
+                if (nodep->name() == entry.varTarget) {
                     AstVar* varp = nodep->cloneTree(false);
                     varp->name("tmp_" + nodep->name());
                     varp->origName("tmp_" + nodep->name());
@@ -659,7 +664,11 @@ class InstrumentationFunction final : public VNVisitor {
         const auto& map = V3Config::getInstrumentationConfigs();
         const auto instrCfg = map.find(key);
         if (instrCfg != map.end()) {
-            return instrCfg->second.instrVarps[index];
+            const auto& entries = instrCfg->second.entries;
+            if (index < entries.size()) {
+                return entries[index].instrVarps;
+            }
+            return nullptr;
         } else {
             return nullptr;
         }
@@ -669,7 +678,11 @@ class InstrumentationFunction final : public VNVisitor {
         const auto& map = V3Config::getInstrumentationConfigs();
         const auto instrCfg = map.find(key);
         if (instrCfg != map.end()) {
-            return instrCfg->second.origVarps[index];
+            const auto& entries = instrCfg->second.entries;
+            if (index < entries.size()) {
+                return entries[index].origVarps;
+            }
+            return nullptr;
         } else {
             return nullptr;
         }
@@ -725,7 +738,11 @@ class InstrumentationFunction final : public VNVisitor {
         const auto& map = V3Config::getInstrumentationConfigs();
         const auto instrCfg = map.find(key);
         if (instrCfg != map.end()) {
-            return instrCfg->second.instrID[index];
+            const auto& entries = instrCfg->second.entries;
+            if (index < entries.size()) {
+                return entries[index].instrID;
+            }
+            return -1; // Return -1 if index is out of bounds
         } else {
             return -1;
         }
@@ -735,7 +752,11 @@ class InstrumentationFunction final : public VNVisitor {
         const auto& map = V3Config::getInstrumentationConfigs();
         const auto instrCfg = map.find(key);
         if (instrCfg != map.end()) {
-            return instrCfg->second.instrFunc[index];
+            const auto& entries = instrCfg->second.entries;
+            if (index < entries.size()) {
+                return entries[index].instrFunc;
+            }
+            return "";
         } else {
             return "";
         }
@@ -784,8 +805,9 @@ class InstrumentationFunction final : public VNVisitor {
     void visit(AstModule* nodep) {
         const InstrumentationTarget& target = V3Config::getInstrumentationConfigs().find(
                 m_targetKey)->second;
-        const std::vector<std::string>& varTargets = target.varTargets;
-        for (m_targetIndex = 0; m_targetIndex < varTargets.size(); ++m_targetIndex) {
+        const auto& entries = target.entries;
+        for (m_targetIndex = 0; m_targetIndex < entries.size(); ++m_targetIndex) {
+            const auto& entry = entries[m_targetIndex];
             m_tmp_varp = getMapEntryInstVar(m_targetKey, m_targetIndex);
             m_orig_varp = getMapEntryVar(m_targetKey, m_targetIndex);
             m_task_name = getMapEntryFunction(m_targetKey, m_targetIndex);
@@ -819,7 +841,7 @@ class InstrumentationFunction final : public VNVisitor {
                 m_taskrefp->taskp(m_taskp);
                 m_alwaysp = new AstAlways(nodep->fileline(), VAlwaysKwd::ALWAYS, nullptr, nullptr);
                 nodep->addStmtsp(m_alwaysp);
-                if (m_targetIndex == varTargets.size() - 1) { setDone(nodep); }
+                if (m_targetIndex == entries.size() - 1) { setDone(nodep); }
                 for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                     if (VN_IS(n, Port)) {
                         m_pinnum = VN_CAST(n, Port)->pinNum();
@@ -856,6 +878,7 @@ class InstrumentationFunction final : public VNVisitor {
             m_taskp = nullptr;
             m_taskrefp = nullptr;
             m_addedTask = false;
+            m_addedport = false;
             m_instBeginp = nullptr;
         }
         m_targetIndex = 0;

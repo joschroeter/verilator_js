@@ -613,17 +613,14 @@ public:
         auto [prefix, varTarget] = splitPrefixAndVar(target);
         //const string& prefix = splitResult.first;
         //const string& varTarget = splitResult.second;
+        InstrumentationEntry entry{instrID, instrFunction, varTarget};
         auto it = instrCfg.find(prefix);
         if (it != instrCfg.end()) {
-            it->second.instrID.push_back(instrID);
-            it->second.instrFunc.push_back(instrFunction);
-            it->second.varTargets.push_back(varTarget);
+            it->second.entries.push_back(entry);
         } else {
         // Create a new entry in the map
             InstrumentationTarget newTarget;
-            newTarget.instrID.push_back(instrID);
-            newTarget.instrFunc.push_back(instrFunction);
-            newTarget.varTargets.push_back(varTarget);
+            newTarget.entries.push_back(entry);
             instrCfg[prefix] = std::move(newTarget);
         }
 

@@ -359,7 +359,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
                     //------------------
                 }
                 iterateChildren(nodep);
-            }                       
+            }
         } else if(!m_error && !m_foundCellp) {
              v3error("Verilator-configfile: could not find 'instance' in "
                     "'__.instance.__' ... Target string: '"
@@ -605,6 +605,7 @@ public:
 class InstrumentationFunction final : public VNVisitor {
     bool m_assignw = false; // Flag if a assignw exists in the netlist
     bool m_addedport = false; // Flag if a port was already added
+    bool m_addedTask = false; // Flag if a task was already added
     int m_pinnum = 0; // Pinnumber for the new Port nodes
     string m_targetKey; // Stores the target string from the instrumentation config
     string m_task_name;
@@ -791,10 +792,18 @@ class InstrumentationFunction final : public VNVisitor {
             if (isInstModEntry(nodep, m_targetKey) && !isDone(nodep)) {
                 m_current_module = nodep;
 
-                m_taskp = new AstTask(nodep->fileline(), m_task_name, nullptr);
-                m_taskp->dpiImport(true);
-                m_taskp->prototype(true);
-                nodep->addStmtsp(m_taskp);
+                for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                    if (VN_IS(n, Task) && n->name() == m_task_name) {
+                        m_taskp = VN_CAST(n, Task);
+                        m_addedTask = true;
+                    }
+                }
+                if (!m_addedTask) {
+                    m_taskp = new AstTask(nodep->fileline(), m_task_name, nullptr);
+                    m_taskp->dpiImport(true);
+                    m_taskp->prototype(true);
+                    nodep->addStmtsp(m_taskp);
+                }
 
                 if (m_orig_varp->direction() == VDirection::INPUT) {
                     m_tmp_varp->varType(VVarType::VAR);
@@ -844,7 +853,9 @@ class InstrumentationFunction final : public VNVisitor {
             m_current_module = nullptr;
             m_current_module_cell_check = nullptr;
             m_alwaysp = nullptr;
+            m_taskp = nullptr;
             m_taskrefp = nullptr;
+            m_addedTask = false;
             m_instBeginp = nullptr;
         }
         m_targetIndex = 0;
@@ -896,6 +907,8 @@ class InstrumentationFunction final : public VNVisitor {
         } else if (m_instBeginp != nullptr && nodep->modp() == getMapEntryInstModule(m_targetKey)
                    && m_orig_varp->direction() == VDirection::OUTPUT) {
             iterateChildren(nodep);
+        } else if (m_current_module != nullptr && m_orig_varp->direction() == VDirection::INPUT) {
+            iterateChildren(nodep);
         }
     }
 
@@ -904,13 +917,17 @@ class InstrumentationFunction final : public VNVisitor {
     //variable name. This is done to ensure that the pin is correctly linked to the instrumented
     //variable in the cell.
     void visit(AstPin* nodep) {
-        if (nodep->name() == m_orig_varp->name()) { nodep->name(m_tmp_varp->name()); }
+        if (nodep->name() == m_orig_varp->name() && m_orig_varp->direction() == VDirection::INPUT) {
+            iterateChildren(nodep);
+        } else if (nodep->name() == m_orig_varp->name()) {
+            nodep->name(m_tmp_varp->name());
+        }
     }
 
     //ASTTASK VISITOR FUNCTION:
     //The function is used to further specify the task node.
     void visit(AstTask* nodep) {
-        if (nodep == m_taskp && m_current_module != nullptr) {
+        if (m_addedTask == false && nodep == m_taskp && m_current_module != nullptr) {
             AstVar* instrID = nullptr;
             AstVar* var_x_task = nullptr;
             AstVar* tmp_var_task = nullptr;
@@ -980,6 +997,7 @@ class InstrumentationFunction final : public VNVisitor {
             m_assignw = true;
             iterateChildren(nodep);
         }
+        m_assignw = false;
     }
 
     //ASTPARSE REF VISITOR FUNCTION:

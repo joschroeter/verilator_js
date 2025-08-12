@@ -282,7 +282,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
                     editInstrData(instrModp, m_currHier);
                     AstCell* cellp = nullptr;
                     for (AstNode* n = instrModp->op2p(); n; n = n->nextp()) {
-                        if (VN_IS(n, Cell) && (VN_CAST(n, Cell)->modp() == nodep)) {
+                        if (VN_IS(n, Cell) && (VN_CAST(n, Cell)->modp() == nodep) && instrCfg.find(m_currHier)->second.cellp->name() == n->name()) {
                             cellp = VN_CAST(n, Cell);
                             break;
                         }
@@ -565,6 +565,9 @@ class InstrumentationTargetFinder final : public VNVisitor {
                     varp->name("tmp_" + nodep->name());
                     varp->origName("tmp_" + nodep->name());
                     varp->trace(true);
+                    if (varp->varType() == VVarType::WIRE) {
+                        varp->varType(VVarType::VAR);
+                    }
                     setVar(nodep, varp, m_target);
                     if (string::npos == m_currHier.rfind('.')) {
                         AstModule* modulep = m_modp->cloneTree(false);
@@ -611,6 +614,7 @@ class InstrumentationFunction final : public VNVisitor {
     bool m_assignw = false; // Flag if a assignw exists in the netlist
     bool m_addedport = false; // Flag if a port was already added
     bool m_addedTask = false; // Flag if a task was already added
+    bool m_interface = false; // Flag if the ParseRef node is part of an interface
     int m_pinnum = 0; // Pinnumber for the new Port nodes
     string m_targetKey; // Stores the target string from the instrumentation config
     string m_task_name;
@@ -623,7 +627,7 @@ class InstrumentationFunction final : public VNVisitor {
     AstModule* m_current_module_cell_check = nullptr; // Stores the module node(used by cell visitor)
     AstVar* m_tmp_varp = nullptr; // Stores the instrumented variable node
     AstVar* m_orig_varp = nullptr; // Stores the original variable node
-    AstParseRef* m_added_parserefp = nullptr; // Stores the parseref node added by the visitor
+    AstVar* m_orig_varp_instMod = nullptr; // Stores the original variable node in instrumented module node
     AstPort* m_orig_portp = nullptr; // Stores the original port node
 
     // METHODS
@@ -991,6 +995,12 @@ class InstrumentationFunction final : public VNVisitor {
         iterateChildren(nodep);
     }
 
+    void visit(AstVar* nodep) {
+        if (m_current_module != nullptr && nodep->name() == m_orig_varp->name()) {
+            m_orig_varp_instMod = nodep;
+        }
+    }
+
     //ASTTASKREF VISITOR FUNCTION:
     //The function is used to further specify the task reference node called by the always node.
     void visit(AstTaskRef* nodep) {
@@ -999,15 +1009,15 @@ class InstrumentationFunction final : public VNVisitor {
 
             constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{},
                                      getMapEntryFaultCase(m_targetKey, m_targetIndex));
-
-            m_added_parserefp
-                = new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, m_orig_varp->name());
+            
+            AstVarRef* added_varrefp = new AstVarRef(nodep->fileline(), m_orig_varp_instMod, VAccess::READ);
 
             nodep->addPinsp(new AstArg(nodep->fileline(), "", constp_id));
-            nodep->addPinsp(new AstArg(nodep->fileline(), "", m_added_parserefp));
+            nodep->addPinsp(new AstArg(nodep->fileline(), "", added_varrefp));
             nodep->addPinsp(new AstArg(
                 nodep->fileline(), "",
                 new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, m_tmp_varp->name())));
+            m_orig_varp_instMod = nullptr;
         }
     }
 
@@ -1021,6 +1031,19 @@ class InstrumentationFunction final : public VNVisitor {
             iterateChildren(nodep);
         }
         m_assignw = false;
+        m_interface = false;
+    }
+
+    // These two function are used to circumvent the instrumentation of ParseRef nodes for interfaces
+    void visit(AstDot* nodep) {
+        if (m_current_module != nullptr) {
+            m_interface = true;
+        }
+    }
+    void visit(AstReplicate* nodep) {
+        if (m_current_module != nullptr) {
+            m_interface = true;
+        }
     }
 
     //ASTPARSE REF VISITOR FUNCTION:
@@ -1036,7 +1059,7 @@ class InstrumentationFunction final : public VNVisitor {
     void visit(AstParseRef* nodep) {
         if (m_current_module != nullptr && m_orig_varp != nullptr
             && nodep->name() == m_orig_varp->name()) {
-            if (m_assignw && m_orig_varp->direction() != VDirection::OUTPUT) {
+            if (m_assignw && !m_interface && m_orig_varp->direction() != VDirection::OUTPUT) {
                 nodep->name(m_tmp_varp->name());
             } else if (m_orig_varp->direction() == VDirection::INPUT) {
                 nodep->name(m_tmp_varp->name());

@@ -42,6 +42,7 @@
 #include "V3DepthBlock.h"
 #include "V3Descope.h"
 #include "V3DfgOptimizer.h"
+#include "V3DumpSignals.h"
 #include "V3EmitC.h"
 #include "V3EmitCMain.h"
 #include "V3EmitCMake.h"
@@ -214,6 +215,11 @@ static void process() {
 
         // Calculate and check widths, edit tree to TRUNC/EXTRACT any width mismatches
         V3Width::width(v3Global.rootp());
+
+        if (v3Global.opt.dumpSignals()) {
+            cout << "Dumping signals in the design:\n";
+            V3DumpSignals::dumpSignals(v3Global.rootp());
+        }
 
         V3Error::abortIfErrors();
 

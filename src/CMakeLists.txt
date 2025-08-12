@@ -77,6 +77,7 @@ set(HEADERS
     V3DfgPatternStats.h
     V3DfgPeephole.h
     V3DfgVertices.h
+    V3DumpSignals.h
     V3DupFinder.h
     V3EmitC.h
     V3EmitCBase.h
@@ -234,6 +235,7 @@ set(COMMON_SOURCES
     V3DfgPasses.cpp
     V3DfgPeephole.cpp
     V3DfgRegularize.cpp
+    V3DumpSignals.cpp
     V3DupFinder.cpp
     V3Timing.cpp
     V3EmitCBase.cpp

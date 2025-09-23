@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only OR Artistic-2.0
 //
 //*************************************************************************
-// 
+//
 //*************************************************************************
 
 #include "V3PchAstNoMT.h"  // VL_MT_DISABLED_CODE_UNIT
@@ -39,8 +39,24 @@ class DumpSignals final : public VNVisitor {
     void diveIntoCellModp(AstNodeModule* modp) {
         for (AstNode* n = modp->op2p(); n; n = n->nextp()) {
                 if (VN_IS(n, Var) && !VN_AS(n, Var)->isParam() && !VN_AS(n, Var)->isGenVar() && !VN_AS(n, Var)->isIfaceRef() && !VN_AS(n, Var)->isIfaceParent()) {
-                    std::string varHier = m_currHier + n->name() + " : Type[" + n->dtypep()->name() + "] Width[" + std::to_string(n->width()) + "]";
-                    m_signalFile << varHier << "\n";
+                    AstVar* varp = VN_AS(n, Var);
+                    if (varp->basicp() && varp->basicp()->name() != "") {
+                        bool hasRangep = varp->basicp()->rangep() != nullptr;
+                        bool isSized = varp->basicp()->widthSized();
+                        if (hasRangep) {
+                            std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(varp->basicp()->rangep()->elementsConst()) + "]";
+                            m_signalFile << varHier << "\n";
+                        } else {
+                            if (varp->basicp()->implicit()){
+                                // Since Var is implicit set the width to 1 like in V3Width.cpp in the AstVar visitor
+                                std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(1) + "]";
+                                m_signalFile << varHier << "\n";
+                            } else {
+                                std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(varp->basicp()->width()) + "]";
+                                m_signalFile << varHier << "\n";
+                            }
+                        }
+                    }
                 } else if (VN_IS(n, Cell)) {
                     if (VN_IS(VN_AS(n, Cell)->modp(), Module)) {
                         m_foundCell = true;
@@ -59,9 +75,23 @@ class DumpSignals final : public VNVisitor {
             m_currHier = nodep->name() + ".";
             for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
                 if (VN_IS(n, Var) && !VN_AS(n, Var)->isParam() && !VN_AS(n, Var)->isGenVar() && !VN_AS(n, Var)->isIfaceRef() && !VN_AS(n, Var)->isIfaceParent()) {
-                    if (n->dtypep()->name() != "") {
-                        std::string varHier = m_currHier + n->name() + " : Type[" + n->dtypep()->name() + "] Width[" + std::to_string(n->width()) + "]";
-                        m_signalFile << varHier << "\n";
+                    AstVar* varp = VN_AS(n, Var);
+                    if (varp->basicp() && varp->basicp()->name() != "") {
+                        bool hasRangep = varp->basicp()->rangep() != nullptr;
+                        bool isSized = varp->basicp()->widthSized();
+                        if (hasRangep) {
+                            std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(varp->basicp()->rangep()->elementsConst()) + "]";
+                            m_signalFile << varHier << "\n";
+                        } else {
+                            if (varp->basicp()->implicit()){
+                                // Since Var is implicit set the width to 1 like in V3Width.cpp in the AstVar visitor
+                                std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(1) + "]";
+                                m_signalFile << varHier << "\n";
+                            } else {
+                                std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(varp->basicp()->width()) + "]";
+                                m_signalFile << varHier << "\n";
+                            }
+                        }
                     }
                 } else if (VN_IS(n, Cell)) {
                     if (VN_IS(VN_AS(n, Cell)->modp(), Module)) {

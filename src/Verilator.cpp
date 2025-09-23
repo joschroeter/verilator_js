@@ -150,6 +150,11 @@ static void process() {
             std::exit(0);
         }
 
+        if (v3Global.opt.dumpSignals()) {
+            cout << "Dumping signals in the design:\n";
+            V3DumpSignals::dumpSignals(v3Global.rootp());
+        }
+
         // Instrument Design with the configurations given in .vlt file
         if (v3Global.opt.instrument()) {
             v3Global.dpi(true);
@@ -215,11 +220,6 @@ static void process() {
 
         // Calculate and check widths, edit tree to TRUNC/EXTRACT any width mismatches
         V3Width::width(v3Global.rootp());
-
-        if (v3Global.opt.dumpSignals()) {
-            cout << "Dumping signals in the design:\n";
-            V3DumpSignals::dumpSignals(v3Global.rootp());
-        }
 
         V3Error::abortIfErrors();
 

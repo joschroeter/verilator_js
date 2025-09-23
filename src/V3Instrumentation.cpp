@@ -793,7 +793,7 @@ class InstrumentationFunction final : public VNVisitor {
         AstBasicDType* basicp = nullptr;
         if (orig_varp->basicp()->isLiteralType() || orig_varp->basicp()->implicit()) {
             int width;
-            if (orig_varp->basicp()->implicit()) { 
+            if (orig_varp->basicp()->implicit()) {
                 // Since Var is implicit set/assume the width as 1 like in V3Width.cpp in the AstVar visitor
                 width = 1;
                 std::cout << orig_varp << " is implicit. Therefore width: " << width << std::endl;
@@ -1100,7 +1100,7 @@ class InstrumentationFunction final : public VNVisitor {
 
             constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{},
                                      getMapEntryFaultCase(m_targetKey, m_targetIndex));
-            
+
             AstVarRef* added_varrefp = new AstVarRef(nodep->fileline(), m_orig_varp_instMod, VAccess::READ);
 
             nodep->addPinsp(new AstArg(nodep->fileline(), "", constp_id));
@@ -1120,7 +1120,7 @@ class InstrumentationFunction final : public VNVisitor {
 
             constp_id = new AstConst(nodep->fileline(), AstConst::Unsized32{},
                                      getMapEntryFaultCase(m_targetKey, m_targetIndex));
-            
+
             AstVarRef* added_varrefp = new AstVarRef(nodep->fileline(), m_orig_varp_instMod, VAccess::READ);
 
             nodep->addPinsp(new AstArg(nodep->fileline(), "", constp_id));

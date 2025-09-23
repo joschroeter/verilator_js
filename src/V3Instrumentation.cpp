@@ -804,6 +804,10 @@ class InstrumentationFunction final : public VNVisitor {
             std::cout << "Creating function for variable: " << orig_varp << " with width: " << width << std::endl;
             if (width <= 1) {
                 basicp = new AstBasicDType(nodep->fileline(), VBasicDTypeKwd::BIT);
+            } else if (width <= 8) {
+                basicp = new AstBasicDType(nodep->fileline(), VBasicDTypeKwd::BYTE);
+            } else if (width <= 16) {
+                basicp = new AstBasicDType(nodep->fileline(), VBasicDTypeKwd::SHORTINT);
             } else if (width <= 32) {
                 basicp = new AstBasicDType(nodep->fileline(), VBasicDTypeKwd::INT);
                 std::cout << basicp << std::endl;

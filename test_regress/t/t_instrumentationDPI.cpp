@@ -11,26 +11,18 @@
 #include <iostream>
 #include <svdpi.h>
 
-extern "C" void instrument_var(int id, const svLogicVecVal *x, svLogicVecVal *tmp_x) {
+extern "C" short instrument_var(int id, const svLogic *x) {
     switch (id)
     {
     case 0:
-        tmp_x->aval = 0;
-        tmp_x->bval = 0;
-        break;
+        return 0;
     case 1:
         // Stuck at 1 Fault Injection
-        tmp_x->aval = 1;
-        tmp_x->bval = 1;
-        break;
+        return 1;
     case 2:
         // Inverter/Bit flip Fault injection (provisional)
-        tmp_x->aval = ~(x->aval);
-        tmp_x->bval = x->bval;
-        break;
+        return !x;
     default:
-        tmp_x->aval = x->aval;
-        tmp_x->bval = x->bval;
-        break;
+        return *x;
     }
 }

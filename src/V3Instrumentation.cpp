@@ -70,6 +70,24 @@ class InstrumentationTargetFinder final : public VNVisitor {
         }
         return false;
     }
+    // Helper function to check if a parameter was already added to the tree previously
+    bool hasParam(AstModule* modp) {
+        for (AstNode* n = modp->op2p(); n; n = n->nextp()) {
+            if (n->name() == "INSTRUMENT") {
+                return true;
+            }
+        }
+        return false;
+    }
+    // Helper function to check if a pin was already added to the tree previously
+    bool hasPin(AstCell* cellp) {
+        for (AstNode* n = cellp->paramsp(); n; n = n->nextp()) {
+            if (n->name() == "INSTRUMENT") {
+                return true;
+            }
+        }
+        return false;
+    }
     // Check if the multipleCellps flag is set for the given target
     bool hasMultiple(const std::string& target) {
         auto& instrCfg = V3Config::getInstrumentationConfigs();
@@ -83,7 +101,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
     // to create the correct link between the already instrumented module and the current one.
     bool hasPrior(AstModule* modulep, const string& target) {
         const auto& instrCfg = V3Config::getInstrumentationConfigs();
-        auto priorTarget = reduce2Depth(split(target), 1);
+        auto priorTarget = reduce2Depth(split(target), KeyDepth::RelevantModule);
         auto it = instrCfg.find(priorTarget);
         return it != instrCfg.end()
                 && it->second.processed;
@@ -93,12 +111,12 @@ class InstrumentationTargetFinder final : public VNVisitor {
     }
     // Check if the given current Hierarchy matches the top module of the target (Pos: 0)
     bool targetHasTop(const string& currHier, const string& target) {
-        return currHier == reduce2Depth(split(target), 0);
+        return currHier == reduce2Depth(split(target), KeyDepth::TopModule);
     }
     // Check if the current hierarhy string matches the target string until the depth
     // to the module that includes the cell/instance pointing to the targeted module
     bool targetHasPointingMod(const string& pointingModuleName, const string& target) {
-        return pointingModuleName == reduce2Depth(split(target), 1);
+        return pointingModuleName == reduce2Depth(split(target), KeyDepth::RelevantModule);
     }
     // Check if the given prefix matches the beginning of the current target string
     bool targetHasPrefix(const string& prefix, const string& target) {
@@ -111,19 +129,44 @@ class InstrumentationTargetFinder final : public VNVisitor {
         std::sregex_token_iterator end;
         return std::vector<std::string>(iter, end);
     }
-    // Helper function to reduce a given key to a certain hierarchy depth.
-    // 0 = top module, 1 = relevant module, 2 = instance pointing to relevant module,
-    // 3 = full key
-    string reduce2Depth(std::vector<std::string> keyTokens, const int depth) {
+    // Helper function to reduce a given key to a certain hierarchy level.
+    enum class KeyDepth {
+        TopModule = 0,
+        RelevantModule = 1,
+        Instance = 2,
+        FullKey = 3
+    };
+    string reduce2Depth(std::vector<std::string> keyTokens, KeyDepth hierarchyLevel) {
         std::string reducedKey = keyTokens[0];
-        if (depth == 0) {
+        if (hierarchyLevel == KeyDepth::TopModule) {
             return keyTokens[0];
         } else {
-            for (size_t i = 1; i < keyTokens.size() - depth; ++i) {
+            int d = static_cast<int>(hierarchyLevel);
+            for (size_t i = 1; i < keyTokens.size() - d; ++i) {
                 reducedKey += "." + keyTokens[i];
             }
             return reducedKey;
         }
+    }
+    // Helper function for adding the parameters into the tree
+    void addParam(AstModule* modp) {
+        AstVar* paramp = new AstVar(modp->fileline(), VVarType::GPARAM, "INSTRUMENT",
+                                                VFlagChildDType{}, nullptr);
+                    paramp->valuep(
+                        new AstConst(modp->fileline(), AstConst::Signed32{}, 0));
+                    paramp->dtypep(paramp->valuep()->dtypep());
+                    paramp->ansi(true);
+                    modp->addStmtsp(paramp);
+    }
+    // Helper function for adding the parameters into the tree
+    void addPin(AstCell* cellp) {
+        int pinnum = 0;
+        for (AstNode* n = cellp->pinsp(); n; n = n->nextp()) { pinnum++; }
+        AstPin* pinp
+            = new AstPin(cellp->fileline(), pinnum + 1, "INSTRUMENT",
+                    new AstParseRef(cellp->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"));
+        pinp->param(true);
+        cellp->addParamsp(pinp);
     }
     // Edit the instrumentation data for the cell in the map
     void editInstrData(AstCell* cellp, const string& target) {
@@ -141,7 +184,21 @@ class InstrumentationTargetFinder final : public VNVisitor {
             it->second.pointingModulep = modulep;
         }
     }
-    // Inser the cell node that is/will pointing/point to the targeted module
+    // Check for multiple cells pointing to the next module
+    void multCellForModp(AstCell* cellp) {
+        std::multiset<AstNodeModule*> cellModps;
+        for (AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
+            if (VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
+        }
+        m_modp = nullptr;
+        m_cellModp = cellp->modp();
+        auto modpRepetition = cellModps.count(m_cellModp);
+        if (modpRepetition > 1
+            && !targetHasFullName(m_currHier, m_target)) {
+            setMultiple(m_target);
+        }
+    }
+    // Insert the cell node that is/will pointing/point to the targeted module
     void setCell(AstCell* cellp, const string& target) {
         auto& instrCfg = V3Config::getInstrumentationConfigs();
         auto it = instrCfg.find(target);
@@ -212,13 +269,14 @@ class InstrumentationTargetFinder final : public VNVisitor {
     //ASTMODULE VISITOR FUNCTION:
     //Iterates over the existing module nodes in the netlist.
     //For the first module in the netlist the node name is checked if it is at the first position in
-    //the string. If not an error is thown, otherwise the modules is checked for an already existing
-    //INSTRUMENT parameter. If there is no INSTRUMENT parameter present we add it to the module. This
-    //parameter is used to control the instrumentation of the target. The module is then added to the
-    //map of the instrumentation configs as the top module. Additionally the hierarchy the function
-    //viewed is currently add is initialized with the module name. This module hierarchy is used to
-    //identify the correct target path in the netlist. The function iterates over the children of the
-    //module, with the Cells and Vars beeing the relevant targets.
+    //the target string provided by the configuration file. If not an error is thown, otherwise the
+    //modules is checked for an already existing INSTRUMENT parameter. If there is no INSTRUMENT 
+    //parameter present we add it to the module. This parameter is used to control the 
+    //instrumentation of the target. The module is then added to the map of the instrumentation 
+    //configs as the top module. Additionally the hierarchy the function viewed is currently add is
+    //initialized with the module name. This module hierarchy is used to identify the correct target 
+    //path in the netlist. The function iterates over the children of the module, with the Cells and
+    //Vars beeing the relevant targets.
 
     //After the iteration of the children the m_modp variable needs to be set by the Cell visitor to
     //continue or there needs no suitable cell to be found. (See CELL VISITOR FUNCTION & VAR VISITOR
@@ -231,30 +289,13 @@ class InstrumentationTargetFinder final : public VNVisitor {
     //parameter is added to the module nodes in the target path. This parameter is used to control
     //the instrumentation of the target.
     void visit (AstModule* nodep) {
-        bool alreadyParam = false;
         if (m_initModp) {
             if (targetHasTop(nodep->name(), m_target)) {
                 m_foundModp = true;
                 m_modp = nodep;
                 m_currHier = nodep->name();
-                // Check if there is already a Parameter
-                for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                    if (n->name() == "INSTRUMENT") {
-                        alreadyParam = true;
-                        break;
-                    }
-                }
-                //--------
-                if (!alreadyParam) {
-                    // Adding Parameter
-                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT",
-                                                VFlagChildDType{}, nullptr);
-                    paramp->valuep(
-                        new AstConst(nodep->fileline(), AstConst::Signed32{}, 0));
-                    paramp->dtypep(paramp->valuep()->dtypep());
-                    paramp->ansi(true);
-                    nodep->addStmtsp(paramp);
-                    //------------------
+                if (!hasParam(nodep)) {
+                    addParam(nodep);
                 }
                 if (string::npos == m_target.rfind('.')) {
                     m_targetModp = nodep;
@@ -278,7 +319,7 @@ class InstrumentationTargetFinder final : public VNVisitor {
                 // Check for prior changes made to the tree
                 if (hasPrior(nodep, m_currHier)) {
                     auto& instrCfg = V3Config::getInstrumentationConfigs();
-                    instrModp = instrCfg.find(reduce2Depth(split(m_currHier), 1))->second.instrModulep;
+                    instrModp = instrCfg.find(reduce2Depth(split(m_currHier), KeyDepth::RelevantModule))->second.instrModulep;
                     editInstrData(instrModp, m_currHier);
                     AstCell* cellp = nullptr;
                     for (AstNode* n = instrModp->op2p(); n; n = n->nextp()) {
@@ -289,24 +330,8 @@ class InstrumentationTargetFinder final : public VNVisitor {
                     }
                     editInstrData(cellp, m_currHier);
                 }
-                // Check if there is already a Parameter
-                for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                    if (n->name() == "INSTRUMENT") {
-                        alreadyParam = true;
-                        break;
-                    }
-                }
-                //--------
-                if (!alreadyParam) {
-                    // Adding Parameter
-                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT",
-                                                VFlagChildDType{}, nullptr);
-                    paramp->valuep(
-                        new AstConst(nodep->fileline(), AstConst::Signed32{}, 0));
-                    paramp->dtypep(paramp->valuep()->dtypep());
-                    paramp->ansi(true);
-                    nodep->addStmtsp(paramp);
-                    //------------------
+                if (!hasParam(nodep)) {
+                    addParam(nodep);
                 }
                 instrModp = nodep->cloneTree(false);
                 instrModp->name(nodep->name() + "__inst__" + std::to_string(m_instrIdx));
@@ -318,24 +343,8 @@ class InstrumentationTargetFinder final : public VNVisitor {
                 m_foundCellp = false;
                 m_modp = nodep;
                 m_cellModp = nullptr;
-                // Check if there is already a Parameter
-                for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                    if (n->name() == "INSTRUMENT") {
-                        alreadyParam = true;
-                        break;
-                    }
-                }
-                //--------
-                if (!alreadyParam) {
-                    // Adding Parameter
-                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT",
-                                                VFlagChildDType{}, nullptr);
-                    paramp->valuep(
-                        new AstConst(nodep->fileline(), AstConst::Signed32{}, 0));
-                    paramp->dtypep(paramp->valuep()->dtypep());
-                    paramp->ansi(true);
-                    nodep->addStmtsp(paramp);
-                    //------------------
+                if (!hasParam(nodep)) {
+                    addParam(nodep);
                 }
                 setPointingMod(nodep, m_target);
                 iterateChildren(nodep);
@@ -344,24 +353,8 @@ class InstrumentationTargetFinder final : public VNVisitor {
                 m_foundCellp = false;
                 m_modp = nodep;
                 m_cellModp = nullptr;
-                // Check if there is already a Parameter
-                for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                    if (n->name() == "INSTRUMENT") {
-                        alreadyParam = true;
-                        break;
-                    }
-                }
-                //--------
-                if (!alreadyParam) {
-                    // Adding Parameter
-                    AstVar* paramp = new AstVar(nodep->fileline(), VVarType::GPARAM, "INSTRUMENT",
-                                                VFlagChildDType{}, nullptr);
-                    paramp->valuep(
-                        new AstConst(nodep->fileline(), AstConst::Signed32{}, 0));
-                    paramp->dtypep(paramp->valuep()->dtypep());
-                    paramp->ansi(true);
-                    nodep->addStmtsp(paramp);
-                    //------------------
+                if (!hasParam(nodep)) {
+                    addParam(nodep);
                 }
                 iterateChildren(nodep);
             }
@@ -394,80 +387,26 @@ class InstrumentationTargetFinder final : public VNVisitor {
     //removed (Module, Var). This function ensures that the correct cells in the design hierarchy are
     //instrumented and tracked, supporting both unique and repeated module instances.
     void visit (AstCell* nodep) {
-        int pinnum = 0;
-        bool alreadyPin = false;
         if (m_initModp) {
             if (targetHasFullName(m_currHier + "." + nodep->name(), m_target)) {
                 m_foundCellp = true;
                 m_foundModp = false;
                 m_initModp = false;
                 m_currHier = m_currHier + "." + nodep->name();
-                // Check if there is already a Pin
-                for (AstNode* n = nodep->paramsp(); n; n = n->nextp()) {
-                    if (n->name() == "INSTRUMENT") {
-                        alreadyPin = true;
-                        break;
-                    }
+                if (!hasPin(nodep)) {
+                    addPin(nodep);
                 }
-                //--------
-                if (!alreadyPin) {
-                    // Adding Pin
-                    for (AstNode* n = nodep->pinsp(); n; n = n->nextp()) { pinnum++; }
-                    AstPin* pinp
-                        = new AstPin(nodep->fileline(), pinnum + 1, "INSTRUMENT",
-                                new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"));
-                    pinp->param(true);
-                    nodep->addParamsp(pinp);
-                    //------------------
-                }
-                // Check for multiple cells pointing to the next module
-                std::multiset<AstNodeModule*> cellModps;
-                for (AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
-                    if (VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
-                }
-                m_modp = nullptr;
-                m_cellModp = nodep->modp();
-                auto modpRepetition = cellModps.count(m_cellModp);
-                if (modpRepetition > 1
-                    && !targetHasFullName(m_currHier, m_target)) {
-                    setMultiple(m_target);
-                }
+                multCellForModp(nodep);
                 setCell(nodep, m_target);
             } else if (targetHasPrefix(m_currHier + "." + nodep->name(), m_target)) {
                 m_foundCellp = true;
                 m_foundModp = false;
                 m_initModp = false;
                 m_currHier = m_currHier + "." + nodep->name();
-                // Check if there is already a Pin
-                for (AstNode* n = nodep->paramsp(); n; n = n->nextp()) {
-                    if (n->name() == "INSTRUMENT") {
-                        alreadyPin = true;
-                        break;
-                    }
+                if (!hasPin(nodep)) {
+                    addPin(nodep);
                 }
-                //--------
-                if (!alreadyPin) {
-                    // Adding Pin
-                    for (AstNode* n = nodep->pinsp(); n; n = n->nextp()) { pinnum++; }
-                    AstPin* pinp
-                        = new AstPin(nodep->fileline(), pinnum + 1, "INSTRUMENT",
-                                     new AstConst(nodep->fileline(), AstConst::Signed32{}, 1));
-                    pinp->param(true);
-                    nodep->addParamsp(pinp);
-                    //------------------
-                }
-                // Check for multiple cells pointing to the next module
-                std::multiset<AstNodeModule*> cellModps;
-                for (AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
-                    if (VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
-                }
-                m_modp = nullptr;
-                m_cellModp = nodep->modp();
-                auto modpRepetition = cellModps.count(m_cellModp);
-                if (modpRepetition > 1
-                    && !targetHasFullName(m_currHier, m_target)) {
-                    setMultiple(m_target);
-                }
+                multCellForModp(nodep);
                 setCell(nodep, m_target);
             } else if (!m_foundCellp && !VN_IS(nodep->nextp(), Cell)) {
                 v3error("Verilator-configfile': could not find initial 'instance' in "
@@ -480,71 +419,19 @@ class InstrumentationTargetFinder final : public VNVisitor {
             m_foundCellp = true;
             m_foundModp = false;
             m_currHier = m_currHier + "." + nodep->name();
-            // Check if there is already a Pin
-            for (AstNode* n = nodep->paramsp(); n; n = n->nextp()) {
-                if (n->name() == "INSTRUMENT") {
-                    alreadyPin = true;
-                    break;
+            if (!hasPin(nodep)) {
+                    addPin(nodep);
                 }
-            }
-            //--------
-            if (!alreadyPin) {
-                // Adding Pin
-                for (AstNode* n = nodep->pinsp(); n; n = n->nextp()) { pinnum++; }
-                AstPin* pinp
-                    = new AstPin(nodep->fileline(), pinnum + 1, "INSTRUMENT",
-                            new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"));
-                pinp->param(true);
-                nodep->addParamsp(pinp);
-                //------------------
-            }
-            // Check for multiple cells pointing to the next module
-            std::multiset<AstNodeModule*> cellModps;
-            for (AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
-                if (VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
-            }
-            m_modp = nullptr;
-            m_cellModp = nodep->modp();
-            auto modpRepetition = cellModps.count(m_cellModp);
-            if (modpRepetition > 1
-                && !targetHasFullName(m_currHier, m_target)) {
-                setMultiple(m_target);
-            }
+            multCellForModp(nodep);
             setCell(nodep, m_target);
         } else if (m_modp != nullptr && targetHasPrefix(m_currHier + "." + nodep->name(), m_target)) {
             m_foundCellp = true;
             m_foundModp = false;
             m_currHier = m_currHier + "." + nodep->name();
-            // Check if there is already a Pin
-            for (AstNode* n = nodep->paramsp(); n; n = n->nextp()) {
-                if (n->name() == "INSTRUMENT") {
-                    alreadyPin = true;
-                    break;
+            if (!hasPin(nodep)) {
+                    addPin(nodep);
                 }
-            }
-            //--------
-            if (!alreadyPin) {
-                // Adding Pin
-                for (AstNode* n = nodep->pinsp(); n; n = n->nextp()) { pinnum++; }
-                AstPin* pinp
-                    = new AstPin(nodep->fileline(), pinnum + 1, "INSTRUMENT",
-                            new AstParseRef(nodep->fileline(), VParseRefExp::PX_TEXT, "INSTRUMENT"));
-                pinp->param(true);
-                nodep->addParamsp(pinp);
-                //------------------
-            }
-            // Check for multiple cells pointing to the next module
-            std::multiset<AstNodeModule*> cellModps;
-            for (AstNode* n = m_modp->op2p(); n; n = n->nextp()) {
-                if (VN_IS(n, Cell)) { cellModps.insert(VN_CAST(n, Cell)->modp()); }
-            }
-            m_modp = nullptr;
-            m_cellModp = nodep->modp();
-            auto modpRepetition = cellModps.count(m_cellModp);
-            if (modpRepetition > 1
-                && !targetHasFullName(m_currHier, m_target)) {
-                setMultiple(m_target);
-            }
+            multCellForModp(nodep);
         }
     }
 
@@ -649,64 +536,57 @@ class InstrumentationFunction final : public VNVisitor {
 
     // METHODS
     //----------------------------------------------------------------------------------
-    // Get the Cell nodep pointer from the configuration map for the given key
-    AstCell* getMapEntryCell(const std::string& key) {
+    // Find the relevant instrumentation config in the map corresponding to the given key
+    const InstrumentationTarget* getInstrCfg(const std::string& key) {
         const auto& map = V3Config::getInstrumentationConfigs();
-        const auto instrCfg = map.find(key);
+        auto instrCfg = map.find(key);
         if (instrCfg != map.end()) {
-            return instrCfg->second.cellp;
+            return &instrCfg->second;
         } else {
             return nullptr;
         }
     }
+    // Get the Cell nodep pointer from the configuration map for the given key
+    AstCell* getMapEntryCell(const std::string& key) {
+        if (auto cfg = getInstrCfg(key)) {
+            return cfg->cellp;
+        }
+        return nullptr;
+    }
     // Get the instrumented Module node pointer from the configuration map for the given key
     AstModule* getMapEntryInstModule(const std::string& key) {
-        const auto& map = V3Config::getInstrumentationConfigs();
-        const auto instrCfg = map.find(key);
-        if (instrCfg != map.end()) {
-            return instrCfg->second.instrModulep;
-        } else {
-            return nullptr;
+        if (auto cfg = getInstrCfg(key)) {
+            return cfg->instrModulep;
         }
+        return nullptr;
     }
     // Get the Module node pointer pointing to the instrumented/original module from the
     // configuration map for the given key
     AstModule* getMapEntryPointingModule(const std::string& key) {
-        const auto& map = V3Config::getInstrumentationConfigs();
-        const auto instrCfg = map.find(key);
-        if (instrCfg != map.end()) {
-            return instrCfg->second.pointingModulep;
-        } else {
-            return nullptr;
+        if (auto cfg = getInstrCfg(key)) {
+            return cfg->pointingModulep;
         }
+        return nullptr;
     }
     // Get the instrumented variable node pointer from the configuration map for the given key
     AstVar* getMapEntryInstVar(const std::string& key, size_t index) {
-        const auto& map = V3Config::getInstrumentationConfigs();
-        const auto instrCfg = map.find(key);
-        if (instrCfg != map.end()) {
-            const auto& entries = instrCfg->second.entries;
+        if (auto cfg = getInstrCfg(key)) {
+            const auto& entries = cfg->entries;
             if (index < entries.size()) {
                 return entries[index].instrVarps;
             }
-            return nullptr;
-        } else {
-            return nullptr;
         }
+        return nullptr;
     }
     // Get the original variable node pointer from the configuration map for the given key
     AstVar* getMapEntryVar(const std::string& key,  size_t index) {
-        const auto& map = V3Config::getInstrumentationConfigs();
-        const auto instrCfg = map.find(key);
-        if (instrCfg != map.end()) {
-            const auto& entries = instrCfg->second.entries;
+        if (auto cfg = getInstrCfg(key)) {
+            const auto& entries = cfg->entries;
             if (index < entries.size()) {
                 return entries[index].origVarps;
             }
-            return nullptr;
-        } else {
-            return nullptr;
         }
+        return nullptr;
     }
     // Check if the given module node pointer is an instrumented module entry in the configuration
     // map for the given key

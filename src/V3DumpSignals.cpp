@@ -36,11 +36,8 @@ class DumpSignals final : public VNVisitor {
     std::ofstream m_signalFile;
 
     // Methods
-    void diveIntoCellModp(AstNodeModule* modp) {
-        for (AstNode* n = modp->op2p(); n; n = n->nextp()) {
-                if (VN_IS(n, Var) && !VN_AS(n, Var)->isParam() && !VN_AS(n, Var)->isGenVar() && !VN_AS(n, Var)->isIfaceRef() && !VN_AS(n, Var)->isIfaceParent()) {
-                    AstVar* varp = VN_AS(n, Var);
-                    if (varp->basicp() && varp->basicp()->name() != "") {
+    void processVar(AstVar* varp) {
+        if (varp->basicp() && varp->basicp()->name() != "") {
                         bool hasRangep = varp->basicp()->rangep() != nullptr;
                         bool isSized = varp->basicp()->widthSized();
                         if (hasRangep) {
@@ -56,6 +53,15 @@ class DumpSignals final : public VNVisitor {
                                 m_signalFile << varHier << "\n";
                             }
                         }
+                    }
+    }
+
+    void processChildrenNode(AstNode* nodep) {
+        for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
+                if (VN_IS(n, Var)) {
+                    AstVar* varp = VN_AS(n, Var);
+                    if (!varp->isParam() && !varp->isGenVar() && !varp->isIfaceRef() && !varp->isIfaceParent()) {
+                        processVar(varp);
                     }
                 } else if (VN_IS(n, Cell)) {
                     if (VN_IS(VN_AS(n, Cell)->modp(), Module)) {
@@ -69,40 +75,15 @@ class DumpSignals final : public VNVisitor {
             }
     }
 
+    void diveIntoCellModp(AstNodeModule* modp) {
+        processChildrenNode(modp);
+    }
+
     // VISITORS
     void visit(AstModule* nodep) override {
         if (m_firstModuleNode) {
             m_currHier = nodep->name() + ".";
-            for (AstNode* n = nodep->op2p(); n; n = n->nextp()) {
-                if (VN_IS(n, Var) && !VN_AS(n, Var)->isParam() && !VN_AS(n, Var)->isGenVar() && !VN_AS(n, Var)->isIfaceRef() && !VN_AS(n, Var)->isIfaceParent()) {
-                    AstVar* varp = VN_AS(n, Var);
-                    if (varp->basicp() && varp->basicp()->name() != "") {
-                        bool hasRangep = varp->basicp()->rangep() != nullptr;
-                        bool isSized = varp->basicp()->widthSized();
-                        if (hasRangep) {
-                            std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(varp->basicp()->rangep()->elementsConst()) + "]";
-                            m_signalFile << varHier << "\n";
-                        } else {
-                            if (varp->basicp()->implicit()){
-                                // Since Var is implicit set the width to 1 like in V3Width.cpp in the AstVar visitor
-                                std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(1) + "]";
-                                m_signalFile << varHier << "\n";
-                            } else {
-                                std::string varHier = m_currHier + varp->name() + " : Type[" + varp->basicp()->name() + "] Width[" + std::to_string(varp->basicp()->width()) + "]";
-                                m_signalFile << varHier << "\n";
-                            }
-                        }
-                    }
-                } else if (VN_IS(n, Cell)) {
-                    if (VN_IS(VN_AS(n, Cell)->modp(), Module)) {
-                        m_foundCell = true;
-                        std::string oldHier = m_currHier;
-                        m_currHier += n->name() + ".";
-                        diveIntoCellModp(VN_AS(n, Cell)->modp());
-                        m_currHier = oldHier;
-                    }
-                }
-            }
+            processChildrenNode(nodep);
             m_firstModuleNode = false;
         }
     }

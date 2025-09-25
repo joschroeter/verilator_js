@@ -542,7 +542,7 @@ class V3ConfigResolver final {
     std::unordered_map<string, int> m_hierWorkers;
     FileLine* m_hierWorkersFileLine = nullptr;
     FileLine* m_profileFileLine = nullptr;
-    std::map<string, InstrumentationTarget, LengthThenLexiographic> instrCfg;
+    std::map<string, InstrumentationTarget, LengthThenLexiographic> m_instrCfg;
 
     V3ConfigResolver() = default;
     ~V3ConfigResolver() = default;
@@ -597,7 +597,7 @@ public:
             // No prefix, return error
         }
         string prefix = target.substr(0, pos);
-        string varTarget = target.substr(pos + 1); // Nochmal schauen ob nicht exeption oder aehnlich
+        string varTarget = target.substr(pos + 1);
         return {prefix, varTarget};
     }
     // Add the instrumentation config data to the map to create the initial map (Used in verilog.y)
@@ -611,23 +611,19 @@ public:
         // Implement custom iterator to remove the last part of the target and insert it into the vector of the map
         // If the target string is the same as one already in the map, push the var to the vector
         auto [prefix, varTarget] = splitPrefixAndVar(target);
-        //const string& prefix = splitResult.first;
-        //const string& varTarget = splitResult.second;
         InstrumentationEntry entry{instrID, instrFunction, varTarget};
-        auto it = instrCfg.find(prefix);
-        if (it != instrCfg.end()) {
+        auto it = m_instrCfg.find(prefix);
+        if (it != m_instrCfg.end()) {
             it->second.entries.push_back(entry);
         } else {
         // Create a new entry in the map
             InstrumentationTarget newTarget;
             newTarget.entries.push_back(entry);
-            instrCfg[prefix] = std::move(newTarget);
+            m_instrCfg[prefix] = std::move(newTarget);
         }
-
-        //instrCfg[target] = InstrumentationTarget{faultcase, instFunction};
     }
     std::map<string, InstrumentationTarget, LengthThenLexiographic>& getInstrumentationConfigs() {
-        return instrCfg;
+        return m_instrCfg;
     }
 };
 

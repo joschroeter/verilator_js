@@ -33,7 +33,6 @@ struct LengthThenLexiographic final {
         return a < b;
     }
 };
-// Forward declaration of InstrumentationTarget
 struct InstrumentationEntry final {
     int instrID;
     std::string instrFunc;

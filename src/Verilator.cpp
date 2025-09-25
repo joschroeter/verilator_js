@@ -151,7 +151,6 @@ static void process() {
         }
 
         if (v3Global.opt.dumpSignals()) {
-            cout << "Dumping signals in the design:\n";
             V3DumpSignals::dumpSignals(v3Global.rootp());
         }
 

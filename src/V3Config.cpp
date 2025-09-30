@@ -605,18 +605,21 @@ public:
                                    const string& target) {
         // Error MSG if the instrumentation of the top module is not possible
         if ((std::count(target.begin(), target.end(), '.') < 2)) {
-            v3fatal("In .vlt defined target tries to instrument the highest MODULE, is not possible!"
-            " ... Target string: " << target);
+            v3fatal(
+                "In .vlt defined target tries to instrument the highest MODULE, is not possible!"
+                " ... Target string: "
+                << target);
         }
-        // Implement custom iterator to remove the last part of the target and insert it into the vector of the map
-        // If the target string is the same as one already in the map, push the var to the vector
+        // Implement custom iterator to remove the last part of the target and insert it into the
+        // vector of the map If the target string is the same as one already in the map, push the
+        // var to the vector
         auto [prefix, varTarget] = splitPrefixAndVar(target);
         InstrumentationEntry entry{instrID, instrFunction, varTarget};
         auto it = m_instrCfg.find(prefix);
         if (it != m_instrCfg.end()) {
             it->second.entries.push_back(entry);
         } else {
-        // Create a new entry in the map
+            // Create a new entry in the map
             InstrumentationTarget newTarget;
             newTarget.entries.push_back(entry);
             m_instrCfg[prefix] = std::move(newTarget);
@@ -684,7 +687,8 @@ void V3Config::addInstrumentationConfigs(FileLine* fl, const string& instrumenta
     V3ConfigResolver::s().addInstrumentationConfigs(fl, instrumentationfunc, instrID, target);
 }
 
-std::map<string, InstrumentationTarget, LengthThenLexiographic>& V3Config::getInstrumentationConfigs() {
+std::map<string, InstrumentationTarget, LengthThenLexiographic>&
+V3Config::getInstrumentationConfigs() {
     return V3ConfigResolver::s().getInstrumentationConfigs();
 }
 

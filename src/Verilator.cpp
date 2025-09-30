@@ -150,9 +150,7 @@ static void process() {
             std::exit(0);
         }
 
-        if (v3Global.opt.dumpSignals()) {
-            V3DumpSignals::dumpSignals(v3Global.rootp());
-        }
+        if (v3Global.opt.dumpSignals()) { V3DumpSignals::dumpSignals(v3Global.rootp()); }
 
         // Instrument Design with the configurations given in .vlt file
         if (v3Global.opt.instrument()) {

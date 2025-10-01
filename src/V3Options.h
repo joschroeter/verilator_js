@@ -251,6 +251,7 @@ private:
     bool m_decorationNodes = false;  // main switch: --decoration=nodes
     bool m_diagnosticsSarif = false;  // main switch: --diagnostics-sarif
     bool m_dpiHdrOnly = false;      // main switch: --dpi-hdr-only
+    bool m_dumpSignals = false;     // main switch: --dump-signals
     bool m_emitAccessors = false;   // main switch: --emit-accessors
     bool m_exe = false;             // main switch: --exe
     bool m_flatten = false;         // main switch: --flatten
@@ -562,6 +563,7 @@ public:
     bool dumpDfgPatterns() const {
         return m_dumpLevel.count("dfg-patterns") && m_dumpLevel.at("dfg-patterns");
     }
+    bool dumpSignals() const { return m_dumpSignals; }
     bool dumpTreeDot() const {
         return m_dumpLevel.count("tree-dot") && m_dumpLevel.at("tree-dot");
     }

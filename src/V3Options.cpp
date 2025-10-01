@@ -1986,6 +1986,7 @@ void V3Options::parseOptsList(FileLine* fl, const string& optdir, int argc,
     }).notForRerun();
 
     DECL_OPTION("-instrument", OnOff, &m_instrument);
+    DECL_OPTION("-dump-signals", OnOff, &m_dumpSignals);
 
     parser.finalize();
 

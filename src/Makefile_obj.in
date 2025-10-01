@@ -289,7 +289,7 @@ RAW_OBJS_PCH_ASTNOMT = \
   V3InlineCFuncs.o \
   V3Inst.o \
   V3InstrCount.o \
-  V3Instrumentation.o \
+  V3Instrument.o \
   V3Interface.o \
   V3LibMap.o \
   V3Life.o \

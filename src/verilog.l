@@ -166,6 +166,7 @@ vnum    {vnum1}|{vnum2}|{vnum3}|{vnum4}|{vnum5}
   "verilator_lib"       { FL; return yVLT_VERILATOR_LIB; }
 
   -?"-block"            { FL; return yVLT_D_BLOCK; }
+  -?"-callback"         { FL; return yVLT_D_CALLBACK; }
   -?"-contents"         { FL; return yVLT_D_CONTENTS; }
   -?"-cost"             { FL; return yVLT_D_COST; }
   -?"-clock"            { FL; return yVLT_D_CLOCK; }
@@ -174,7 +175,6 @@ vnum    {vnum1}|{vnum2}|{vnum3}|{vnum4}|{vnum5}
   -?"-function"         { FL; return yVLT_D_FUNCTION; }
   -?"-hier-dpi"         { FL; return yVLT_D_HIER_DPI; }
   -?"-id"               { FL; return yVLT_D_ID; }
-  -?"-instance"         { FL; return yVLT_D_INSTANCE; }
   -?"-levels"           { FL; return yVLT_D_LEVELS; }
   -?"-lines"            { FL; return yVLT_D_LINES; }
   -?"-match"            { FL; return yVLT_D_MATCH; }

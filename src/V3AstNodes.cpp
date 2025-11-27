@@ -3402,6 +3402,8 @@ void AstVar::dumpJson(std::ostream& str) const {
     dumpJsonBoolFuncIf(str, hasUserInit);
     dumpJsonBoolFuncIf(str, ignorePostWrite);
     dumpJsonBoolFuncIf(str, ignoreSchedWrite);
+    dumpJsonBoolFuncIf(str, isHookInserted);
+    dumpJsonNum(str, "width", width());
     dumpJsonGen(str);
 }
 void AstScope::dump(std::ostream& str) const {

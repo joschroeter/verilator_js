@@ -313,7 +313,7 @@ private:
     bool m_waiverMultiline = false;  // main switch: --waiver-multiline
     bool m_xInitialEdge = false;    // main switch: --x-initial-edge
     bool m_xmlOnly = false;         // main switch: --xml-only
-    bool m_instrument = false;      // main switch: --instrument
+    bool m_insertHook = false;      // main switch: --insert-hook
 
     int         m_assertUnrollLimit = 1024;  // main switch: --assert-unroll-limit
     int         m_buildJobs = -1;    // main switch: --build-jobs, -j
@@ -621,7 +621,7 @@ public:
     bool xInitialEdge() const { return m_xInitialEdge; }
     bool serializeOnly() const { return m_jsonOnly; }
     bool topIfacesSupported() const { return lintOnly() && !hierarchical(); }
-    bool instrument() const { return m_instrument; }
+    bool insertHook() const { return m_insertHook; }
 
     int assertUnrollLimit() const { return m_assertUnrollLimit; }
     int buildJobs() const VL_MT_SAFE { return m_buildJobs; }

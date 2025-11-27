@@ -2183,6 +2183,7 @@ class AstVar final : public AstNode {
     bool m_substConstOnly : 1;  // Only substitute if constant
     bool m_overridenParam : 1;  // Overridden parameter by #(...) or defparam
     bool m_trace : 1;  // Trace this variable
+    bool m_isHookInserted : 1;  // This variable is instrumented for coverage
     bool m_isLatched : 1;  // Not assigned in all control paths of combo always
     bool m_isForceable : 1;  // May be forced/released externally from user C code
     bool m_isForcedByCode : 1;  // May be forced/released from AstAssignForce/AstRelease
@@ -2247,6 +2248,7 @@ class AstVar final : public AstNode {
         m_substConstOnly = false;
         m_overridenParam = false;
         m_trace = false;
+        m_isHookInserted = false;
         m_isLatched = false;
         m_isForceable = false;
         m_isForcedByCode = false;
@@ -2410,6 +2412,7 @@ public:
     void hasUserInit(bool flag) { m_hasUserInit = flag; }
     void icoMaybeWritten(bool flag) { m_icoMaybeWritten = flag; }
     bool icoMaybeWritten() const { return m_icoMaybeWritten; }
+    bool isHookInserted() const { return m_isHookInserted; }
     bool isDpiOpenArray() const VL_MT_SAFE { return m_isDpiOpenArray; }
     void isDpiOpenArray(bool flag) { m_isDpiOpenArray = flag; }
     bool isHideLocal() const { return m_isHideLocal; }

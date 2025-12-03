@@ -68,6 +68,7 @@
 #include "V3InlineCFuncs.h"
 #include "V3Inst.h"
 #include "V3InsertHook.h"
+#include "V3Inst.h"
 #include "V3Interface.h"
 #include "V3LibMap.h"
 #include "V3Life.h"

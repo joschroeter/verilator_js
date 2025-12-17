@@ -6,6 +6,4 @@
 
 `verilator_config
 
-instrument -callback "instrument_var" -id 0 -target "top_module.a1.b1.out"
-
-instrument -callback "instrument_var" -id 1 -target "top_module.a2.out"
+insert_dpihook -callback "instrument_var" -id 0 -var "top_module.outa"

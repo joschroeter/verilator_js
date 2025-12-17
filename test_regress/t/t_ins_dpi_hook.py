@@ -10,16 +10,13 @@
 import vltest_bootstrap
 
 test.scenarios('simulator')
-test.top_filename = "t/t_instrument.v"
+test.top_filename = "t/t_ins_dpi_hook.v"
 
-sim_filename = "t/" + test.name + ".cpp"
-dpi_filename = "t/t_instrumentDPI.cpp"
+dpi_filename = "t/t_ins_dpi_hook_dpi.cpp"
 vlt_filename = "t/" + test.name + ".vlt"
 
-test.compile(
-    make_top_shell=False,
-    make_main=False,
-    v_flags2=["--trace --timing --exe --instrument", sim_filename, vlt_filename, dpi_filename])
+test.compile(v_flags2=["--trace --timing --exe --main", vlt_filename, dpi_filename])
+
 test.execute(expect_filename=test.golden_filename)
 
 test.passes()

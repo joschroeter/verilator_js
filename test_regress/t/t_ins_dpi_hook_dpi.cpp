@@ -18,7 +18,6 @@ extern "C" int instrument_var(int id, int trigger, const svLogic* x) {
         } else {
             return *x;
         }
-        //return 0;
     case 1:
         if ((VL_TIME_Q() < 3) || (VL_TIME_Q() >= 32 && VL_TIME_Q() < 69)) {
             return 1;

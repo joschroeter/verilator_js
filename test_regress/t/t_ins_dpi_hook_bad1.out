@@ -1,0 +1,5 @@
+%Error: t/t_ins_dpi_hook_bad1.vlt:9:1: DPI-hook insertion of target variable 'top_module.outa' not supported on top module
+    9 | insert_dpihook -callback "instrument_var" -id 0 -var "top_module.outa"
+      | ^~~~~~~~~~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Exiting due to

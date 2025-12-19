@@ -1864,6 +1864,7 @@ class AstVar final : public AstNode {
     bool m_overridenParam : 1;  // Overridden parameter by #(...) or defparam
     bool m_trace : 1;  // Trace this variable
     bool m_isDPIHookInserted : 1;  // Hook already inserted
+    bool m_isDPIHookInsParam : 1; // Hook is param to control dpi-hook-insertion path
     bool m_isLatched : 1;  // Not assigned in all control paths of combo always
     bool m_isForceable : 1;  // May be forced/released externally from user C code
     bool m_isForcedByCode : 1;  // May be forced/released from AstAssignForce/AstRelease
@@ -1915,6 +1916,7 @@ class AstVar final : public AstNode {
         m_overridenParam = false;
         m_trace = false;
         m_isDPIHookInserted = false;
+        m_isDPIHookInsParam = false;
         m_isLatched = false;
         m_isForceable = false;
         m_isForcedByCode = false;
@@ -2059,6 +2061,8 @@ public:
     bool hasStrengthAssignment() { return m_hasStrengthAssignment; }
     void isDPIHookInserted(bool flag) { m_isDPIHookInserted = flag; }
     bool isDPIHookInserted() const { return m_isDPIHookInserted; }
+    void isDPIHookInsParam(bool flag) { m_isDPIHookInsParam = flag; }
+    bool isDPIHookInsParam() const { return m_isDPIHookInsParam; }
     void isDpiOpenArray(bool flag) { m_isDpiOpenArray = flag; }
     bool isDpiOpenArray() const VL_MT_SAFE { return m_isDpiOpenArray; }
     bool isHideLocal() const { return m_isHideLocal; }

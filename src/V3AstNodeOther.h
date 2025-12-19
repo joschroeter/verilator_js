@@ -1864,7 +1864,7 @@ class AstVar final : public AstNode {
     bool m_overridenParam : 1;  // Overridden parameter by #(...) or defparam
     bool m_trace : 1;  // Trace this variable
     bool m_isDPIHookInserted : 1;  // Hook already inserted
-    bool m_isDPIHookInsParam : 1; // Hook is param to control dpi-hook-insertion path
+    bool m_isDPIHookInsParam : 1;  // Hook is param to control dpi-hook-insertion path
     bool m_isLatched : 1;  // Not assigned in all control paths of combo always
     bool m_isForceable : 1;  // May be forced/released externally from user C code
     bool m_isForcedByCode : 1;  // May be forced/released from AstAssignForce/AstRelease

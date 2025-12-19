@@ -73,9 +73,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     bool hasParam(const AstModule* modp) {
         for (AstNode* level2p = modp->op2p(); level2p; level2p = level2p->nextp()) {
             if (AstVar* varp = VN_CAST(level2p, Var)) {
-                if (varp->isDPIHookInsParam()) {
-                    return true;
-                }
+                if (varp->isDPIHookInsParam()) { return true; }
             }
         }
         return false;

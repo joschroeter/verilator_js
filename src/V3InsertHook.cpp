@@ -71,8 +71,12 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         return false;
     }
     bool hasParam(const AstModule* modp) {
-        for (const AstNode* level2p = modp->op2p(); level2p; level2p = level2p->nextp()) {
-            if (level2p->name() == "HOOKINS") return true;
+        for (AstNode* level2p = modp->op2p(); level2p; level2p = level2p->nextp()) {
+            if (AstVar* varp = VN_CAST(level2p, Var)) {
+                if (varp->isDPIHookInsParam()) {
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -136,6 +140,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         paramp->valuep(new AstConst{modp->fileline(), AstConst::String{}, ""});
         paramp->dtypep(paramp->valuep()->dtypep());
         paramp->ansi(true);
+        paramp->isDPIHookInsParam(true);
         modp->addStmtsp(paramp);
     }
     void addPin(AstCell* cellp, const bool isInsPath, const string& target) {

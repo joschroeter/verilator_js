@@ -1863,7 +1863,7 @@ class AstVar final : public AstNode {
     bool m_substConstOnly : 1;  // Only substitute if constant
     bool m_overridenParam : 1;  // Overridden parameter by #(...) or defparam
     bool m_trace : 1;  // Trace this variable
-    bool m_isHookInserted : 1;  // This variable is instrumented for coverage
+    bool m_isDPIHookInserted : 1;  // Hook already inserted
     bool m_isLatched : 1;  // Not assigned in all control paths of combo always
     bool m_isForceable : 1;  // May be forced/released externally from user C code
     bool m_isForcedByCode : 1;  // May be forced/released from AstAssignForce/AstRelease
@@ -1914,7 +1914,7 @@ class AstVar final : public AstNode {
         m_substConstOnly = false;
         m_overridenParam = false;
         m_trace = false;
-        m_isHookInserted = false;
+        m_isDPIHookInserted = false;
         m_isLatched = false;
         m_isForceable = false;
         m_isForcedByCode = false;
@@ -2057,8 +2057,8 @@ public:
     bool gotNansiType() { return m_gotNansiType; }
     void hasStrengthAssignment(bool flag) { m_hasStrengthAssignment = flag; }
     bool hasStrengthAssignment() { return m_hasStrengthAssignment; }
-    void hasHookInserted(bool flag) { m_isHookInserted = flag; }
-    bool isHookInserted() const { return m_isHookInserted; }
+    void isDPIHookInserted(bool flag) { m_isDPIHookInserted = flag; }
+    bool isDPIHookInserted() const { return m_isDPIHookInserted; }
     void isDpiOpenArray(bool flag) { m_isDpiOpenArray = flag; }
     bool isDpiOpenArray() const VL_MT_SAFE { return m_isDpiOpenArray; }
     bool isHideLocal() const { return m_isHideLocal; }
@@ -2104,6 +2104,7 @@ public:
     bool isInoutOrRef() const { return m_direction.isInoutOrRef(); }
     bool isInput() const { return m_direction.isInput(); }
     bool isNonOutput() const { return m_direction.isNonOutput(); }
+    bool isOutputish() const { return m_direction.isOutputish(); }
     bool isReadOnly() const VL_MT_SAFE { return m_direction.isReadOnly(); }
     bool isConstRef() const VL_MT_SAFE { return m_direction.isConstRef(); }
     bool isRef() const VL_MT_SAFE { return m_direction.isRef(); }

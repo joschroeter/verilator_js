@@ -123,7 +123,7 @@ vnum    {vnum1}|{vnum2}|{vnum3}|{vnum4}|{vnum5}
   "hier_params"         { FL; return yVLT_HIER_PARAMS; }
   "hier_workers"        { FL; return yVLT_HIER_WORKERS; }
   "inline"              { FL; return yVLT_INLINE; }
-  "insert_hook"          { FL; return yVLT_INSERTHOOK; }
+  "insert_dpihook"      { FL; return yVLT_INSERT_DPIHOOK; }
   "isolate_assignments" { FL; return yVLT_ISOLATE_ASSIGNMENTS; }
   "lint_off"            { FL; return yVLT_LINT_OFF; }
   "lint_on"             { FL; return yVLT_LINT_ON; }
@@ -162,7 +162,6 @@ vnum    {vnum1}|{vnum2}|{vnum3}|{vnum4}|{vnum5}
   -?"-port"             { FL; return yVLT_D_PORT; }
   -?"-rule"             { FL; return yVLT_D_RULE; }
   -?"-scope"            { FL; return yVLT_D_SCOPE; }
-  -?"-target"           { FL; return yVLT_D_TARGET; }
   -?"-task"             { FL; return yVLT_D_TASK; }
   -?"-var"              { FL; return yVLT_D_VAR; }
   -?"-workers"          { FL; return yVLT_D_WORKERS; }

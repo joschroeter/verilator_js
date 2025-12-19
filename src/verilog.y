@@ -250,7 +250,7 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %token<fl>              yVLT_HIER_PARAMS            "hier_params"
 %token<fl>              yVLT_HIER_WORKERS           "hier_workers"
 %token<fl>              yVLT_INLINE                 "inline"
-%token<fl>              yVLT_INSERTHOOK             "insert_hook"
+%token<fl>              yVLT_INSERT_DPIHOOK         "insert_dpihook"
 %token<fl>              yVLT_ISOLATE_ASSIGNMENTS    "isolate_assignments"
 %token<fl>              yVLT_LINT_OFF               "lint_off"
 %token<fl>              yVLT_LINT_ON                "lint_on"
@@ -289,7 +289,6 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %token<fl>              yVLT_D_PORT     "--port"
 %token<fl>              yVLT_D_RULE     "--rule"
 %token<fl>              yVLT_D_SCOPE    "--scope"
-%token<fl>              yVLT_D_TARGET   "--target"
 %token<fl>              yVLT_D_TASK     "--task"
 %token<fl>              yVLT_D_VAR      "--var"
 %token<fl>              yVLT_D_WORKERS  "--workers"
@@ -8013,8 +8012,10 @@ vltItem:
                         { /* Historical, now has no effect */ }
         |       vltInlineFront vltDModuleE vltDFTaskE
                         { V3Control::addInline($<fl>1, *$2, *$3, $1); }
-        |       yVLT_INSERTHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_ID yaINTNUM yVLT_D_TARGET yaSTRING
-                        { V3Control::addHookInsCfg($<fl>1, *$3, $5->toSInt(), *$7); }
+        |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_ID yaINTNUM yVLT_D_VAR yaSTRING
+                        { v3Global.setInsDPIHooks();
+                                V3Control::addHookInsCfg($<fl>1, *$3, $5->toSInt(), *$7); 
+                        }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile
                         { V3Control::addCoverageBlockOff(*$2, 0); }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile yVLT_D_LINES yaINTNUM

@@ -159,13 +159,6 @@ static void process() {
             v3Global.vlExit(0);
         }
 
-        // Hook-insert design with the configurations given in .vlt file
-        if (v3Global.insDPIHooks()) {
-            v3Global.dpi(true);
-            V3InsertHook::findTargets(v3Global.rootp());
-            V3InsertHook::insertHooks(v3Global.rootp());
-        }
-
         // Convert parseref's to varrefs, and other directly post parsing fixups
         V3LinkParse::linkParse(v3Global.rootp());
         // Cross-link signal names
@@ -232,6 +225,13 @@ static void process() {
         V3WidthCommit::widthCommit(v3Global.rootp());
         v3Global.assertDTypesResolved(true);
         v3Global.widthMinUsage(VWidthMinUsage::MATCHES_WIDTH);
+
+        // Hook-insert design with the configurations given in .vlt file
+        if (v3Global.insDPIHooks()) {
+            v3Global.dpi(true);
+            V3InsertHook::findTargets(v3Global.rootp());
+            V3InsertHook::insertHooks(v3Global.rootp());
+        }
 
         // End of elaboration
         V3Stats::addStatPerf(V3Stats::STAT_WALLTIME_ELAB, elabWallTime.deltaTime());

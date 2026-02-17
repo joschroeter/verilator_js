@@ -801,7 +801,7 @@ class V3ControlResolver final {
     uint8_t m_mode = NONE;
     std::unordered_map<string, V3ControlResolverHierWorkerEntry> m_hierWorkers;
     FileLine* m_profileFileLine = nullptr;
-    std::map<string, HookInsertTarget, LengthThenLexiographic> m_hookInsCfg;
+    std::map<std::string, HookInsertTarget> m_hookInsCfg;
 
     V3ControlResolver() = default;
     ~V3ControlResolver() = default;
@@ -880,7 +880,7 @@ public:
         return {prefix, varTarget};
     }
     // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
-    void addHookInsCfg(FileLine* fl, const string& insFunction, const int insID,
+    void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
                        const string& target) {
         // Implement custom iterator to remove the last part of the target and insert it into the
         // vector of the map If the target string is the same as one already in the map, push the
@@ -899,7 +899,7 @@ public:
             m_hookInsCfg[prefix] = std::move(newTarget);
         }
     }
-    std::map<string, HookInsertTarget, LengthThenLexiographic>& getHookInsCfg() {
+    std::map<string, HookInsertTarget>& getHookInsCfg() {
         return m_hookInsCfg;
     }
 };
@@ -974,7 +974,7 @@ void V3Control::addModulePragma(const string& module, VPragmaType pragma) {
     V3ControlResolver::s().modules().at(module).addModulePragma(pragma);
 }
 
-void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const int insID,
+void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const uint32_t insID,
                               const string& target) {
     V3ControlResolver::s().addHookInsCfg(fl, insfunc, insID, target);
 }
@@ -1136,7 +1136,7 @@ const V3Control::FsmRegisterWrapper* V3Control::getFsmRegisterWrapper(const stri
     V3ControlModule* const modp = V3ControlResolver::s().modules().resolve(module);
     return modp ? modp->fsmRegisterWrapperp() : nullptr;
 }
-std::map<string, HookInsertTarget, LengthThenLexiographic>& V3Control::getHookInsCfg() {
+std::map<string, HookInsertTarget>& V3Control::getHookInsCfg() {
     return V3ControlResolver::s().getHookInsCfg();
 }
 uint64_t V3Control::getProfileData(const string& hierDpi) {

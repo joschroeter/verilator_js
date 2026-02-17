@@ -26,35 +26,27 @@
 #include "V3Mutex.h"
 
 //######################################################################
-// Used to sort strings by length, then lexicographically to ensure
-// higher targets are processed first
-struct LengthThenLexiographic final {
-    bool operator()(const string& a, const string& b) const {
-        if (a.length() != b.length()) return a.length() < b.length();
-        return a < b;
-    }
-};
 // Store information for each hook insertion entry for each target string
 struct HookInsertEntry final {
-    int insID;  // ID for switch case if multiple callback functions are used
+    uint32_t insID;  // ID for switch case if multiple callback functions are used
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
-    AstVar* origVarsp;  // Original variable pointer
-    AstVar* insVarsp;  // Cloned variable pointer from original variable pointer with edits
+    AstVar* origVarp;  // Original variable pointer
+    AstVar* dpiHookedVarp;  // Cloned variable pointer from original variable pointer with edits
+    std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
+    std::vector<AstVarRef*> varRefps; // VarRef nodes which should be edited later on
     bool found = false;  // Whether the target variable was found during data finder pass
+    bool done = false; // Whether the hook insertion has been completed for a signal
 };
 // Store all information needed for hook insertion per target string
 struct HookInsertTarget final {
-    std::vector<HookInsertEntry> entries;  // All hook insertion entries for this target
-    AstModule* origModulep;  // Original module pointer containing target var
-    AstModule* insModulep;  // Cloned module pointer from original module pointer with edits
-    AstModule* topModulep;  // Top module pointer
-    AstModule* pointingModulep;  // Module that points to the module containing the target var
-    AstCell* cellp;  // Cell that instantiates the module containing the target var
+    AstModule* origModp;  // Original module pointer containing target var
+    AstVar* dpiTriggerp = nullptr; // Trigger for the DPI function/task
+    bool error = false; // Whether an error occurred during the finder visitor
     bool processed = false;  // Whether the data finder pass has processed this target
-    bool done = false;  // Whether the hook insertion has been completed
-    bool multipleCellps
-        = false;  // Whether multiple cells instantiate the module containing the target var
+    std::vector<AstCell*> cellps;  // Cells that need to have hook inputs
+    std::vector<AstModule*> modps;  // Modules that need to have hook inputs
+    std::vector<HookInsertEntry> entries;  // All hook insertion entries for this target
 };
 
 class V3Control final {
@@ -86,9 +78,9 @@ public:
     static void addIgnoreMatch(V3ErrorCode code, const string& filename, const string& contents,
                                const string& match);
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
-    static void addHookInsCfg(FileLine* fl, const string& callback, const int insID,
+    static void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
                               const string& target);
-    static std::map<string, HookInsertTarget, LengthThenLexiographic>& getHookInsCfg();
+    static std::map<string, HookInsertTarget>& getHookInsCfg();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);
     static void addProfileData(FileLine* fl, const string& model, const string& key,

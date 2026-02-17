@@ -41,17 +41,16 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 //##################################################################################
 // Collect nodes and data from the AST for hook-insertion
 class HookInsTargetFndrVisitor final : public VNVisitor {
-    AstNetlist* m_netlistp
-        = nullptr;  // Used for traversing AST from the beginning if the visitor is to deep
+    AstNetlist* m_netlistp;  // Used for traversing AST from the beginning if the visitor is to deep
     AstNodeModule* m_cellModp = nullptr;
     AstModule* m_modp = nullptr;
     AstModule* m_targetModp = nullptr;
+    bool m_assignNode = false;
     bool m_error = false;
     bool m_foundCellp = false;
-    bool m_foundModp = false;
     bool m_foundVarp = false;
     bool m_initModp = true;  // If the visitor is in the first module node of the netlist
-    size_t m_insIdx = 0;
+    std::map<std::string, HookInsertTarget>& m_insCfg;
     string m_currHier;
     string m_target;
 
@@ -63,57 +62,32 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
         return nullptr;
     }
-    bool cmpPrefix(const string& prefix, const string& target) {
+    bool targetHasFullName(const string& fullname, const string& target) {
+        return fullname == target;
+    }
+    bool targetHasPrefix(const string& prefix, const string& target) {
         if (target.compare(0, prefix.size(), prefix) == 0
             && (target.size() == prefix.size() || target[prefix.size()] == '.')) {
             return true;
         }
         return false;
     }
-    bool hasParam(const AstModule* modp) {
-        for (AstNode* level2p = modp->op2p(); level2p; level2p = level2p->nextp()) {
-            if (AstVar* varp = VN_CAST(level2p, Var)) {
-                if (varp->isDPIHookInsParam()) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-    bool hasPin(const AstCell* cellp) {
-        for (const AstNode* paramp = cellp->paramsp(); paramp; paramp = paramp->nextp()) {
-            if (paramp->name() == "HOOKINS") return true;
-        }
-        return false;
-    }
-    bool hasMultiple(const std::string& target) {
-        const auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) return it->second.multipleCellps;
-        return false;
-    }
-    // Check if the direct predecessor in the target string has been hook-inserted,
-    // to create the correct link between the already hook-inserted module and the current one.
-    bool hasPrior(const AstModule* modulep, const string& target) {
-        const auto& insCfg = V3Control::getHookInsCfg();
-        const auto priorTarget = reduce2Depth(split(target), KeyDepth::RelevantModule);
-        const auto it = insCfg.find(priorTarget);
-        return it != insCfg.end() && it->second.processed;
-    }
-    bool targetHasFullName(const string& fullname, const string& target) {
-        return fullname == target;
-    }
     // Check if the given current Hierarchy matches the top module of the target (Pos: 0)
     bool targetHasTop(const string& currHier, const string& target) {
         return currHier == reduce2Depth(split(target), KeyDepth::TopModule);
     }
-    // Check if the current hierarhy string matches the target string until the depth
-    // to the module that includes the cell/instance pointing to the targeted module
-    bool targetHasPointingMod(const string& pointingModuleName, const string& target) {
-        return pointingModuleName == reduce2Depth(split(target), KeyDepth::RelevantModule);
-    }
-    bool targetHasPrefix(const string& prefix, const string& target) {
-        return cmpPrefix(prefix, target);
+    // In the target string a part is considered the module/instance name seperated by a dot from the nex one
+    // Returns the amount of these parts to get a range for the selector input
+    int getTargetPartAmount(const string& target) {
+        int dots = 0;
+        for (char c : target) {
+            if (c == '.') {
+                dots++;
+            }
+        }
+        // Function uses the dots since a part is always seperated by a dot and adds 1 to address the last part
+        // Also since there is always a variable at the end of a target string we can add 1 to the amount
+        return dots + 1;
     }
     // Split given string by '.' and return a vector of tokens
     std::vector<std::string> split(const std::string& str) {
@@ -134,124 +108,123 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             return reducedKey;
         }
     }
-    void addParam(AstModule* modp) {
-        AstVar* paramp = new AstVar{modp->fileline(), VVarType::GPARAM, "HOOKINS",
-                                    VFlagChildDType{}, nullptr};
-        paramp->valuep(new AstConst{modp->fileline(), AstConst::String{}, ""});
-        paramp->dtypep(paramp->valuep()->dtypep());
-        paramp->ansi(true);
-        paramp->isDPIHookInsParam(true);
-        modp->addStmtsp(paramp);
-    }
-    void addPin(AstCell* cellp, const bool isInsPath, const string& target) {
-        int pinnum = 0;
-        if (isInsPath) {
-            for (AstNode* cellPinp = cellp->pinsp(); cellPinp; cellPinp = cellPinp->nextp())
-                pinnum++;
-            AstPin* pinp = new AstPin{cellp->fileline(), pinnum + 1, "HOOKINS",
-                                      // The pin is set to 1 to enable the hook-insertion path
-                                      new AstConst{cellp->fileline(), AstConst::String{}, target}};
-            pinp->param(true);
-            cellp->addParamsp(pinp);
+    void iterateAssigns(AstNodeAssign* assignp, const string& target, const string& varName, bool isOutput){
+        m_assignNode = true;
+        if (isOutput) {
+            AstNodeExpr* lhsp = assignp->lhsp();
+            if (AstVarRef* varrefp = VN_CAST(lhsp, VarRef)) {
+                if (varrefp->varp()->name() == varName) {
+                    setAssigns(assignp, target, varName);
+                }
+            } else {
+                for (AstVarRef* level1p = VN_CAST(lhsp->op1p(), VarRef); level1p; level1p = VN_CAST(level1p->nextp(), VarRef)) {
+                    if (level1p->varp()->name() == varName) {
+                        setAssigns(assignp, target, varName);
+                    }
+                }
+            }
         } else {
-            for (AstNode* cellPinp = cellp->pinsp(); cellPinp; cellPinp = cellPinp->nextp())
-                pinnum++;
-            AstPin* pinp = new AstPin{cellp->fileline(), pinnum + 1, "HOOKINS",
-                                      new AstParseRef{cellp->fileline(), "HOOKINS"}};
-            pinp->param(true);
-            cellp->addParamsp(pinp);
+            AstNodeExpr* rhsp = assignp->rhsp();
+            if (AstVarRef* varrefp = VN_CAST(rhsp, VarRef)) {
+                if (varrefp->varp()->name() == varName) {
+                    setAssigns(assignp, target, varName);
+                }
+            } else {
+                for (AstVarRef* level1p = VN_CAST(rhsp->op1p(), VarRef); level1p; level1p = VN_CAST(level1p->nextp(), VarRef)) {
+                    if (level1p->varp()->name() == varName) {
+                        setAssigns(assignp, target, varName);
+                    }
+                }
+            }
         }
+        iterateChildren(assignp);
     }
-    void editInsData(AstCell* cellp, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.cellp = cellp;
+    void setError(const string& target) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) it->second.error = true;
     }
-    void editInsData(AstModule* modulep, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.pointingModulep = modulep;
-    }
-    // Check for multiple cells pointing to the next module
-    void multCellForModp(AstCell* cellp) {
-        std::multiset<AstNodeModule*> cellModps;
-        for (AstNode* level2p = m_modp->op2p(); level2p; level2p = level2p->nextp()) {
-            if (const AstCell* cellLv2p = VN_CAST(level2p, Cell))
-                cellModps.insert(cellLv2p->modp());
+    void setOrigModule(AstModule* origModulep, const string& target) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) {
+            it->second.origModp = origModulep;
         }
-        m_modp = nullptr;
-        m_cellModp = cellp->modp();
-        const auto modpRepetition = cellModps.count(m_cellModp);
-        if (modpRepetition > 1 && !targetHasFullName(m_currHier, m_target)) {
-            setMultiple(m_target);
-        }
-    }
-    void setCell(AstCell* cellp, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.cellp = cellp;
-    }
-    void setInsModule(AstModule* origModulep, AstModule* insModulep, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) {
-            it->second.origModulep = origModulep;
-            it->second.insModulep = insModulep;
-        }
-    }
-    void setMultiple(const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.multipleCellps = true;
-    }
-    void setPointingMod(AstModule* modulep, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.pointingModulep = modulep;
     }
     void setProcessed(const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.processed = true;
-    }
-    void setTopMod(AstModule* modulep, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) it->second.topModulep = modulep;
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) it->second.processed = true;
     }
     void setVar(AstVar* varp, AstVar* insVarp, const string& target) {
-        auto& insCfg = V3Control::getHookInsCfg();
-        const auto it = insCfg.find(target);
-        if (it != insCfg.end()) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) {
             for (auto& entry : it->second.entries) {
                 if (entry.varTarget == varp->name()) {
-                    entry.origVarsp = varp;
-                    entry.insVarsp = insVarp;
+                    entry.origVarp = varp;
+                    entry.dpiHookedVarp = insVarp;
                     entry.found = true;
                     return;
                 }
             }
         }
     }
-
+    void setAssigns(AstNodeAssign* assignp, const string& target, const string& varName) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) {
+            for (auto& entry : it->second.entries) {
+                AstVarRef* varrefp = VN_CAST(assignp->rhsp(), VarRef);
+                if (varName == entry.varTarget) {
+                    entry.assignps.push_back(assignp);
+                    return;
+                }
+            }
+        }
+    }
+    void setVarRefs(AstVarRef* varrefp, const string& target, const string& varName) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) {
+            for (auto& entry : it->second.entries) {
+                if (varName == entry.varTarget) {
+                    entry.varRefps.push_back(varrefp);
+                    return;
+                }
+            }
+        }
+    }
+    void setModules(AstModule* modp, const string& target) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) {
+            it->second.modps.push_back(modp);
+        }
+    }
+    void setCells(AstCell* cellp, const string& target) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) {
+            it->second.cellps.push_back(cellp);
+        }
+    }
     // VISITORS
     void visit(AstModule* nodep) override {
         if (m_initModp) {
+            bool foundModp = false;
             if (targetHasTop(nodep->name(), m_target)) {
-                // Add decision parameters to the module if not present
-                m_foundModp = true;
+                foundModp = true;
                 m_modp = nodep;
                 m_currHier = nodep->name();
-                if (!hasParam(nodep)) addParam(nodep);
-                if (string::npos == m_target.rfind('.')) {
-                    m_targetModp = nodep;
-                    m_foundCellp = true;  // Set to true since there is no Instance that the cell
-                                          // visitor could find
+                // Manually iterating over the cells so we can get the modp of the in the target string defined cell
+                // Cell visitor is then used with this m_cellModp set to find all cells that refere to this Module
+                for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
+                    if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
+                        if (targetHasPrefix(m_currHier + "." + cellLv2p->name(), m_target)) {
+                            m_cellModp = cellLv2p->modp();
+                            m_foundCellp = true;
+                            m_currHier = m_currHier + "." + cellLv2p->name();
+                            break;
+                        }
+                    }
                 }
-                // Store top module pointer for later
-                setTopMod(nodep, m_target);
+                setModules(nodep, m_target);
                 iterateChildren(nodep);  // Continue to Cell/Var nodes
-            } else if (!m_foundModp && nodep->name() == "@CONST-POOL@") {
+                m_initModp = false;
+            } else if (!foundModp && nodep->name() == "@CONST-POOL@") {
                 nodep->fileline()->v3error("DPI-hook insertion of target '"
                                            << m_target
                                            << "' could not find initial 'module' in "
@@ -263,47 +236,25 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                    && (nodep = findModp(m_netlistp, VN_CAST(m_cellModp, Module)))) {
             if (targetHasFullName(m_currHier, m_target)) {
                 AstModule* insModp = nullptr;
-                m_foundModp = true;
                 m_targetModp = nodep;
                 m_cellModp = nullptr;
-                // Check for prior changes made to the tree
-                if (hasPrior(nodep, m_currHier)) {
-                    const auto& insCfg = V3Control::getHookInsCfg();
-                    insModp
-                        = insCfg.find(reduce2Depth(split(m_currHier), KeyDepth::RelevantModule))
-                              ->second.insModulep;
-                    editInsData(insModp, m_currHier);
-                    AstCell* cellp = nullptr;
-                    for (AstNode* level2p = insModp->op2p(); level2p; level2p = level2p->nextp()) {
-                        AstCell* cellLv2p = VN_CAST(level2p, Cell);
-                        if (cellLv2p->modp() == nodep
-                            && insCfg.find(m_currHier)->second.cellp->name() == level2p->name()) {
-                            cellp = cellLv2p;
+                setOrigModule(nodep, m_target);
+                iterateChildren(nodep);  // Continue to var node
+            } else if (targetHasPrefix(m_currHier, m_target)) {
+                m_foundCellp = false;
+                m_cellModp = nullptr;
+                m_modp = nodep;
+                for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
+                    if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
+                        if (targetHasPrefix(m_currHier + "." + cellLv2p->name(), m_target)) {
+                            m_cellModp = cellLv2p->modp();
+                            m_foundCellp = true;
+                            m_currHier = m_currHier + "." + cellLv2p->name();
                             break;
                         }
                     }
-                    editInsData(cellp, m_currHier);
                 }
-                if (!hasParam(nodep)) addParam(nodep);
-                insModp = nodep->cloneTree(false);
-                insModp->name(nodep->name() + "__hookIns__" + std::to_string(m_insIdx));
-                if (hasMultiple(m_target)) insModp->inLibrary(true);
-                setInsModule(nodep, insModp, m_target);
-                iterateChildren(nodep);  // Continue to var node
-            } else if (targetHasPointingMod(m_currHier, m_target)) {
-                m_foundModp = true;
-                m_foundCellp = false;
-                m_modp = nodep;
-                m_cellModp = nullptr;
-                if (!hasParam(nodep)) addParam(nodep);
-                setPointingMod(nodep, m_target);
-                iterateChildren(nodep);  // Continue to cell
-            } else if (targetHasPrefix(m_currHier, m_target)) {
-                m_foundModp = true;
-                m_foundCellp = false;
-                m_modp = nodep;
-                m_cellModp = nullptr;
-                if (!hasParam(nodep)) addParam(nodep);
+                setModules(nodep, m_target);
                 iterateChildren(nodep);  // Continue to cell
             }
         } else if (!m_error && !m_foundCellp) {
@@ -321,22 +272,9 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
 
     void visit(AstCell* nodep) override {
         if (m_initModp) {
-            if (targetHasFullName(m_currHier + "." + nodep->name(), m_target)) {
-                m_foundCellp = true;
-                m_foundModp = false;
-                m_initModp = false;
-                m_currHier = m_currHier + "." + nodep->name();
-                if (!hasPin(nodep)) addPin(nodep, false, m_target);
-                multCellForModp(nodep);
-                setCell(nodep->cloneTree(false, false), m_target);
-            } else if (targetHasPrefix(m_currHier + "." + nodep->name(), m_target)) {
-                m_foundCellp = true;
-                m_foundModp = false;
-                m_initModp = false;
-                m_currHier = m_currHier + "." + nodep->name();
-                if (!hasPin(nodep)) addPin(nodep, true, m_target);
-                multCellForModp(nodep);
-                setCell(nodep->cloneTree(false, false), m_target);
+            if (nodep->modp() == m_cellModp) {
+                setCells(nodep, m_target);
+                iterateChildren(nodep);
             } else if (!m_foundCellp && !VN_IS(nodep->nextp(), Cell)) {
                 nodep->fileline()->v3error("DPI-hook insertion of target '"
                                            << m_target
@@ -345,25 +283,15 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                 m_error = true;
                 m_initModp = false;
             }
-        } else if (m_modp && targetHasFullName(m_currHier + "." + nodep->name(), m_target)) {
-            m_foundCellp = true;
-            m_foundModp = false;
-            m_currHier = m_currHier + "." + nodep->name();
-            if (!hasPin(nodep)) addPin(nodep, false, m_target);
-            multCellForModp(nodep);
-            setCell(nodep->cloneTree(false, false), m_target);
-        } else if (m_modp && targetHasPrefix(m_currHier + "." + nodep->name(), m_target)) {
-            m_foundCellp = true;
-            m_foundModp = false;
-            m_currHier = m_currHier + "." + nodep->name();
-            if (!hasPin(nodep)) addPin(nodep, false, m_target);
-            multCellForModp(nodep);
+        } else if (m_modp && nodep->modp() == m_cellModp) {
+            setCells(nodep, m_target);
+            iterateChildren(nodep);
         }
     }
 
     void visit(AstVar* nodep) override {
         if (m_targetModp) {
-            const HookInsertTarget& target = V3Control::getHookInsCfg().find(m_currHier)->second;
+            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
             for (const auto& entry : target.entries) {
                 // Go over all var targets if in same module
                 if (nodep->name() == entry.varTarget) {
@@ -386,18 +314,11 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                         return;
                     }
                     AstVar* varp = nodep->cloneTree(false);
-                    varp->name("tmp_" + nodep->name());
-                    varp->origName("tmp_" + nodep->name());
+                    varp->name("dpiHooked_" + nodep->name());
+                    varp->origName("dpiHooked_" + nodep->name());
                     varp->isDPIHookInserted(true);
                     varp->trace(true);
-                    if (varp->varType() == VVarType::WIRE) varp->varType(VVarType::VAR);
                     setVar(nodep, varp, m_target);
-                    if (string::npos == m_currHier.rfind('.')) {
-                        AstModule* modulep = m_modp->cloneTree(false);
-                        modulep->name(m_modp->name() + "__hookIns__" + std::to_string(m_insIdx));
-                        setInsModule(m_modp, modulep, m_currHier);
-                        m_initModp = false;
-                    }
                     m_foundVarp = true;
                 } else if (!nodep->nextp() && !entry.found) {
                     nodep->fileline()->v3error("DPI-hook insertion of target '"
@@ -410,28 +331,72 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
     };
 
+    void visit(AstAssignW* nodep) override {
+        if (m_targetModp) {
+            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
+            for (const auto& entry : target.entries) {
+                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+            }
+        }
+    }  // Edit assigns if needed
+    void visit(AstAssign* nodep) override {
+        if (m_targetModp) {
+            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
+            for (const auto& entry : target.entries) {
+                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+            }
+        }
+    }  // Edit assigns if needed
+    void visit(AstAssignDly* nodep) override {
+        if (m_targetModp) {
+            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
+            for (const auto& entry : target.entries) {
+                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+            }
+        }
+    }  // Edit assigns if needed
+    void visit(AstAssignForce* nodep) override {
+        if (m_targetModp) {
+            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
+            for (const auto& entry : target.entries) {
+                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+            }
+        }
+    }  // Edit assigns if needed
+    void visit(AstVarRef* nodep) override {
+        if (m_targetModp && !m_assignNode) {
+            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
+            for (const auto& entry : target.entries) {
+                if (nodep->varp()->name() == entry.varTarget) {
+                    setVarRefs(nodep, m_target, entry.varTarget);
+                }
+            }
+        }
+        iterateChildren(nodep);
+    }
+
     void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTOR
     //-------------------------------------------------------------------------------
-    explicit HookInsTargetFndrVisitor(AstNetlist* nodep) {
-        const auto& insCfg = V3Control::getHookInsCfg();
-        for (const auto& pair : insCfg) {
-            VL_RESTORER(m_foundModp);
+    explicit HookInsTargetFndrVisitor(AstNetlist* nodep, std::map<std::string, HookInsertTarget>& insCfg) : m_netlistp(nodep), m_insCfg(insCfg) {
+        for (const auto& pair : m_insCfg) {
+            VL_RESTORER(m_initModp);
             VL_RESTORER(m_foundCellp);
             VL_RESTORER(m_foundVarp);
             VL_RESTORER(m_error);
             VL_RESTORER(m_targetModp);
             VL_RESTORER(m_modp);
             // Set initial flag values
-            m_netlistp = nodep;
             m_target = pair.first;
-            m_initModp = true;
             m_currHier = "";
             iterate(nodep);
-            setProcessed(m_target);
-            m_insIdx++;
+            if (!m_error) {
+                setProcessed(m_target);
+            } else {
+                setError(m_target);
+            }
         }
     };
     ~HookInsTargetFndrVisitor() override = default;
@@ -1039,7 +1004,7 @@ public:
 
 void V3InsertHook::findTargets(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
-    { HookInsTargetFndrVisitor{nodep}; }
+    { HookInsTargetFndrVisitor{nodep, V3Control::getHookInsCfg()}; }
     V3Global::dumpCheckGlobalTree("hookInsertFinder", 0, dumpTreeEitherLevel() >= 3);
 }
 

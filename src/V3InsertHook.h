@@ -23,6 +23,11 @@
 class AstNetlist;
 
 //=========================================================================
+struct SelResEntry {
+    AstVar* drivingSelResp = nullptr;
+    AstVar* selResp = nullptr;
+    AstVar* hookedVarp = nullptr;
+};
 
 class V3InsertHook final {
 public:

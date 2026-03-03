@@ -899,9 +899,7 @@ public:
             m_hookInsCfg[prefix] = std::move(newTarget);
         }
     }
-    std::map<string, HookInsertTarget>& getHookInsCfg() {
-        return m_hookInsCfg;
-    }
+    std::map<string, HookInsertTarget>& getHookInsCfg() { return m_hookInsCfg; }
 };
 
 //######################################################################

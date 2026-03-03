@@ -65,7 +65,6 @@
 #include "V3HierBlock.h"
 #include "V3Inline.h"
 #include "V3InlineCFuncs.h"
-#include "V3Inst.h"
 #include "V3InsertHook.h"
 #include "V3Inst.h"
 #include "V3Interface.h"

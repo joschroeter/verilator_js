@@ -34,15 +34,15 @@ struct HookInsertEntry final {
     AstVar* origVarp;  // Original variable pointer
     AstVar* dpiHookedVarp;  // Cloned variable pointer from original variable pointer with edits
     std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
-    std::vector<AstVarRef*> varRefps; // VarRef nodes which should be edited later on
+    std::vector<AstVarRef*> varRefps;  // VarRef nodes which should be edited later on
     bool found = false;  // Whether the target variable was found during data finder pass
-    bool done = false; // Whether the hook insertion has been completed for a signal
+    bool done = false;  // Whether the hook insertion has been completed for a signal
 };
 // Store all information needed for hook insertion per target string
 struct HookInsertTarget final {
     AstModule* origModp;  // Original module pointer containing target var
-    AstVar* dpiTriggerp = nullptr; // Trigger for the DPI function/task
-    bool error = false; // Whether an error occurred during the finder visitor
+    AstVar* dpiTriggerp = nullptr;  // Trigger for the DPI function/task
+    bool error = false;  // Whether an error occurred during the finder visitor
     bool processed = false;  // Whether the data finder pass has processed this target
     std::vector<AstCell*> cellps;  // Cells that need to have hook inputs
     std::vector<AstModule*> modps;  // Modules that need to have hook inputs

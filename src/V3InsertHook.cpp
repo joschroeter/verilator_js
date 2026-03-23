@@ -200,7 +200,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                 m_modp = nodep;
                 m_currHier = nodep->name();
                 // Manually iterating over the cells so we can get the modp of the in the target
-                // string defined cell. Cell visitor is then used with this m_cellModp set to 
+                // string defined cell. Cell visitor is then used with this m_cellModp set to
                 // find all cells that refere to this Module
                 for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
                     if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
@@ -326,7 +326,9 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
             for (const auto& entry : target.entries) {
-                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+                if (entry.origVarp)
+                    iterateAssigns(nodep, m_target, entry.varTarget,
+                                   entry.origVarp->isOutputish());
             }
         }
     }  // Edit assigns if needed
@@ -334,7 +336,9 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
             for (const auto& entry : target.entries) {
-                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+                if (entry.origVarp)
+                    iterateAssigns(nodep, m_target, entry.varTarget,
+                                   entry.origVarp->isOutputish());
             }
         }
     }  // Edit assigns if needed
@@ -342,7 +346,9 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
             for (const auto& entry : target.entries) {
-                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+                if (entry.origVarp)
+                    iterateAssigns(nodep, m_target, entry.varTarget,
+                                   entry.origVarp->isOutputish());
             }
         }
     }  // Edit assigns if needed
@@ -350,7 +356,9 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
             for (const auto& entry : target.entries) {
-                iterateAssigns(nodep, m_target, entry.varTarget, entry.origVarp->isOutputish());
+                if (entry.origVarp)
+                    iterateAssigns(nodep, m_target, entry.varTarget,
+                                   entry.origVarp->isOutputish());
             }
         }
     }  // Edit assigns if needed

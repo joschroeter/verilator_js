@@ -28,6 +28,11 @@ struct SelResEntry {
     AstVar* selResp = nullptr;
     AstVar* hookedVarp = nullptr;
 };
+struct DTypeCache {
+    AstBasicDType* stringDTypep = nullptr;
+    AstBasicDType* intDTypep = nullptr;
+    AstUnpackArrayDType* partArraySelDTypep = nullptr;
+};
 
 class V3InsertHook final {
 public:

@@ -417,6 +417,7 @@ class PathCtrlLogic final {
     DTypeCache& m_dtypeCache;
     HookInsertTarget& m_insTarget;
     std::unordered_map<AstCell*, AstVar*> m_instPathVarps;
+    std::unordered_map<AstModule*, AstCase*>& m_caseCache;
     std::vector<AstVar*> m_dpihookPathps;
 
     // Methods
@@ -483,11 +484,22 @@ class PathCtrlLogic final {
         dpihookPathp->dtypep(pathsDTypep);
         return dpihookPathp;
     }
+    bool hasDPITrigger() {
+        AstModule* origModp = m_insTarget.origModp;
+        for (AstNode* stmtp = origModp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+            AstVar* varp = VN_CAST(stmtp, Var);
+            if (!varp) continue;
+            if (varp->name() == "DPI_TRIGGER") {
+                m_insTarget.dpiTriggerp = varp;
+                return true;
+            }
+        }
+        return false;
+    }
     bool hasPathFilter(AstModule* modp) {
-        for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
-            AstAlways* alwaysp = VN_CAST(stmtp, Always);
-            if (!alwaysp) continue;
-            if (alwaysp->stmtsp()->name() == "DPIHOOK_PATH_FILTER") return true;
+        auto it = m_caseCache.find(modp);
+        if (it != m_caseCache.end()) {
+            return it->second != nullptr;
         }
         return false;
     }
@@ -498,15 +510,15 @@ class PathCtrlLogic final {
             for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
                 AstVar* varp = VN_CAST(stmtp, Var);
                 if (!varp) continue;
-                bool hasName = varp->name() == "DPIHOOK_PATH" || varp->name() == "DPIHOOK_ENABLE";
-                bool isSelInput = varp->isInput() && hasName;
-                if (varp->name() == "DPIHOOK_PATH") m_dpihookPathps.push_back(varp);
-                if (varp && isSelInput) return true;
+                if (varp->name() == "DPIHOOK_PATH" && varp->isInput()) {
+                    m_dpihookPathps.push_back(varp);
+                    return true;
+                }
             }
         }
         if (cellp) {
             for (const AstNode* pinp = cellp->pinsp(); pinp; pinp = pinp->nextp()) {
-                bool hasName = pinp->name() == "DPIHOOK_PATH" || pinp->name() == "DPIHOOK_ENABLE";
+                bool hasName = pinp->name() == "DPIHOOK_PATH";
                 if (hasName) return true;
             }
         }
@@ -616,6 +628,7 @@ class PathCtrlLogic final {
         // Create Case with Case items
         AstCase* pathFilterCasep
             = new AstCase{modp->fileline(), VCaseType::CT_CASE, targetVarRefRp, nullptr};
+        m_caseCache.insert({modp, pathFilterCasep});
         insertCaseItems(modp, pathFilterCasep, hookPathp, loopVarRefRp, idx);
         // Create Assign for the target path
         AstSel* selp = new AstSel{modp->fileline(), loopVarRefRp->cloneTree(false),
@@ -715,7 +728,7 @@ class PathCtrlLogic final {
             typeTablep->addTypesp(m_dpiTriggerTypep);
         }
         AstVar* dpiTriggerp
-            = new AstVar{origModp->fileline(), VVarType::VAR, "dpi_trigger", m_dpiTriggerTypep};
+            = new AstVar{origModp->fileline(), VVarType::VAR, "DPI_TRIGGER", m_dpiTriggerTypep};
         dpiTriggerp->lifetime(VLifetime::STATIC_IMPLICIT);
         dpiTriggerp->trace(false);
         m_insTarget.dpiTriggerp = dpiTriggerp;
@@ -729,11 +742,13 @@ class PathCtrlLogic final {
     }
 
 public:
-    PathCtrlLogic(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey, DTypeCache& dtypeCache)
+    PathCtrlLogic(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey, DTypeCache& dtypeCache,
+                  std::unordered_map<AstModule*, AstCase*>& caseCache)
         : m_netlistp(nodep)
         , m_insTarget(insTarget)
         , m_cfgKey(cfgKey)
-        , m_dtypeCache(dtypeCache) {}
+        , m_dtypeCache(dtypeCache)
+        , m_caseCache(caseCache) {}
     void insert() {
         m_dpihookPathps.clear();
         // Insert logic to modules
@@ -742,7 +757,7 @@ public:
         insCtrlLogic2Cellp();
         // Insert DPI trigger to target module
         // Done here since it is target module specific and not signal specific
-        insDPITrigger2Modp();
+        if (!hasDPITrigger()) insDPITrigger2Modp();
     }
 };
 
@@ -754,7 +769,7 @@ class HookLogic final {
     };
     // Members
     AstBasicDType* m_idDTypep = nullptr;
-    AstCase*& m_casep;
+    AstCase* m_casep = nullptr;
     AstModule* m_targetModp;  // Provided by constructor
     AstFunc* m_funcp = nullptr;
     AstTask* m_taskp = nullptr;
@@ -762,9 +777,10 @@ class HookLogic final {
     AstVar* m_condVarp = nullptr;
     AstVar* m_dpiTriggerp;  // Provided by constructor
     AstVar* m_selResp = nullptr;
-    const HookInsertEntry& m_targetEntry;  // Provided by constructor
+    HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::map<std::pair<AstVar*, AstNodeExpr*>, SelResEntry> m_rhsReplaceEntries;
+    std::unordered_map<AstModule*, AstCase*>& m_caseCache; // Provided by constructor
 
     // Methods
     AstAlways* createHandler(AstVar* hookedVarp, AstVar* targetVarp, AstVar* selResp,
@@ -915,11 +931,11 @@ class HookLogic final {
         return false;
     }
     bool hasTargetFilter() {
-        for (AstNode* stmtp = m_targetModp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
-            AstAlways* alwaysp = VN_CAST(stmtp, Always);
-            if (!alwaysp) continue;
-            if (alwaysp->stmtsp()->name() == "DPIHOOK_TARGET_FILTER") return true;
-        }
+        auto it = m_caseCache.find(m_targetModp);
+            if (it != m_caseCache.end() && it->second) {
+                m_casep = it->second;
+                return true;
+            }
         return false;
     }
     VBasicDTypeKwd getBasicDType(int rangeValue, AstBasicDType* basicDTypep) {
@@ -1022,7 +1038,7 @@ class HookLogic final {
         m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
                                targetVarp->name() + "_selRes", hookedVarp->dtypep()};
         m_selResp->lifetime(VLifetime::STATIC_IMPLICIT);
-        m_selResp->trace(false);
+        m_selResp->trace(true);
         m_selResp->isDPIHookInserted(true);
         if (targetVarp->isOutputish()) {
             int idx = 0;
@@ -1158,6 +1174,7 @@ class HookLogic final {
         // Create Case with Case items
         m_casep
             = new AstCase{m_targetModp->fileline(), VCaseType::CT_CASE, targetVarRefRp, nullptr};
+        m_caseCache.insert({m_targetModp, m_casep});
         // Create Assign for the target path
         AstSel* selp = new AstSel{m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
                                   new AstConst{m_targetModp->fileline(), 0}, 2};
@@ -1214,13 +1231,14 @@ class HookLogic final {
 
 public:
     HookLogic(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
-              AstCase*& casep, const HookInsertEntry& targetEntry,
+              HookInsertEntry& targetEntry,
+              std::unordered_map<AstModule*, AstCase*>& caseCache,
               std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap)
         : m_targetModp(targetModule)
-        , m_casep(casep)
         , m_typeTablep(typeTablep)
         , m_dpiTriggerp(dpiTriggerp)
         , m_targetEntry(targetEntry)
+        , m_caseCache(caseCache)
         , m_selResMap(selResMap) {}
     void insert() {
         VL_RESTORER(m_selResp);
@@ -1243,8 +1261,8 @@ public:
         if (!hasTargetFilter()) {
             insTargetFilter();
             insCaseItem(targetVarp);
-        } else
-            insCaseItem(targetVarp);
+        } else insCaseItem(targetVarp);
+        m_targetEntry.done = true;
     }
 };
 
@@ -1252,6 +1270,17 @@ class DPIHookInserterNew final {
     // Members
     AstNetlist* m_netlistp;
     std::map<std::string, HookInsertTarget>& m_insCfg;
+
+    // Methods
+    bool existsEntry(AstModule* modp, AstVar* varp) {
+        for (const auto& [key, target] : m_insCfg) {
+            if (target.origModp != modp) continue;
+            for (const auto& entry : target.entries) {
+                if (entry.origVarp == varp && entry.done) return true;
+            }
+        }
+        return false;
+    }
 
 public:
     DPIHookInserterNew(AstNetlist* nodep, std::map<std::string, HookInsertTarget>& insCfg)
@@ -1261,6 +1290,7 @@ public:
     void insDPIHooks() {
         AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         DTypeCache dtypeCache;
+        std::unordered_map<AstModule*, AstCase*> caseCache;
         // Map in Vector kopieren
         std::vector<std::pair<std::string, HookInsertTarget*>> sortedCfg;
         for (auto& [key, target] : m_insCfg) { sortedCfg.emplace_back(key, &target); }
@@ -1281,7 +1311,7 @@ public:
                 return;
             }
             // PathModule anpassen
-            PathCtrlLogic insPathCrtlLogic{m_netlistp, *target, key, dtypeCache};
+            PathCtrlLogic insPathCrtlLogic{m_netlistp, *target, key, dtypeCache, caseCache};
             insPathCrtlLogic.insert();
             // Validate all entries before sorting
             for (auto& entry : target->entries) {
@@ -1304,12 +1334,13 @@ public:
                                  return !aIsOutput && bIsOutput;
                              });
             std::map<std::pair<AstVar*, AstVar*>, SelResEntry> selResMap;
-            AstCase* sharedCase = nullptr;
             // Insert hook logic for each entry
             for (auto& entry : target->entries) {
-                HookLogic insHookLogic{target->origModp, typeTablep, target->dpiTriggerp,
-                                       sharedCase,       entry,      selResMap};
-                insHookLogic.insert();
+                if (!existsEntry(target->origModp, entry.origVarp)) {
+                    HookLogic insHookLogic{target->origModp, typeTablep, target->dpiTriggerp,
+                                           entry, caseCache, selResMap};
+                    insHookLogic.insert();
+                }
             }
         }
     }

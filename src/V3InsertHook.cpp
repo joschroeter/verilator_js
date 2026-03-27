@@ -321,7 +321,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             }
         }
     };
-
+    // Collect assigns if needed
     void visit(AstAssignW* nodep) override {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
@@ -331,7 +331,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                    entry.origVarp->isOutputish());
             }
         }
-    }  // Edit assigns if needed
+    }  // Collect assigns if needed
     void visit(AstAssign* nodep) override {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
@@ -341,7 +341,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                    entry.origVarp->isOutputish());
             }
         }
-    }  // Edit assigns if needed
+    }  // Collect assigns if needed
     void visit(AstAssignDly* nodep) override {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
@@ -351,7 +351,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                    entry.origVarp->isOutputish());
             }
         }
-    }  // Edit assigns if needed
+    }  // Collect assigns if needed
     void visit(AstAssignForce* nodep) override {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
@@ -361,7 +361,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                    entry.origVarp->isOutputish());
             }
         }
-    }  // Edit assigns if needed
+    }  // Collect VarRefs if needed
     void visit(AstVarRef* nodep) override {
         if (m_targetModp && !m_assignNode) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
@@ -442,12 +442,13 @@ class PathCtrlLogic final {
         AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         // Generate necessary dtype for Path Varps and Pinsp
         if (!m_dtypeCache.stringDTypep) {
-            m_dtypeCache.stringDTypep = new AstBasicDType{modp->fileline(), VBasicDTypeKwd::STRING};
+            m_dtypeCache.stringDTypep
+                = new AstBasicDType{modp->fileline(), VBasicDTypeKwd::STRING};
             m_dtypeCache.stringDTypep->generic(true);
             typeTablep->addTypesp(m_dtypeCache.stringDTypep);
         }
-        AstVar* dpihookPathp
-            = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_PATH", m_dtypeCache.stringDTypep};
+        AstVar* dpihookPathp = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_PATH",
+                                          m_dtypeCache.stringDTypep};
         dpihookPathp->direction(VDirection::INPUT);
         dpihookPathp->lifetime(VLifetime::STATIC_IMPLICIT);
         dpihookPathp->trace(false);
@@ -498,9 +499,7 @@ class PathCtrlLogic final {
     }
     bool hasPathFilter(AstModule* modp) {
         auto it = m_caseCache.find(modp);
-        if (it != m_caseCache.end()) {
-            return it->second != nullptr;
-        }
+        if (it != m_caseCache.end()) { return it->second != nullptr; }
         return false;
     }
     bool hasSelInput(AstNode* nodep) {
@@ -537,12 +536,13 @@ class PathCtrlLogic final {
                     int targetParts
                         = m_insTarget.modps.size();  // Target part amount for left range value
                     AstRange* rangep = new AstRange{modp->fileline(), targetParts - nextIdx, 0};
-                    AstUnpackArrayDType* partsDTypep
-                        = new AstUnpackArrayDType{modp->fileline(), m_dtypeCache.stringDTypep, rangep};
+                    AstUnpackArrayDType* partsDTypep = new AstUnpackArrayDType{
+                        modp->fileline(), m_dtypeCache.stringDTypep, rangep};
                     partsDTypep->isCompound(true);
                     AstUnpackArrayDType* pathsDTypep = new AstUnpackArrayDType{
                         modp->fileline(), partsDTypep,
-                        new AstRange{modp->fileline(), 3, 0}};  //TODO: Remove hardcoding of 3 here [2]
+                        new AstRange{modp->fileline(), 3,
+                                     0}};  //TODO: Remove hardcoding of 3 here [2]
                     pathsDTypep->isCompound(true);
                     pathsDTypep->refDTypep(partsDTypep);
                     AstVar* instPathVarp = new AstVar{modp->fileline(), VVarType::VAR,
@@ -579,8 +579,8 @@ class PathCtrlLogic final {
                                                              VNumRange{targetParts - idx, 1}};
                     AstRange* sliceSelRangep
                         = new AstRange{modp->fileline(), targetParts - idx, 1};
-                    AstUnpackArrayDType* sliceSelDTypep
-                        = new AstUnpackArrayDType{modp->fileline(), m_dtypeCache.stringDTypep, sliceSelRangep};
+                    AstUnpackArrayDType* sliceSelDTypep = new AstUnpackArrayDType{
+                        modp->fileline(), m_dtypeCache.stringDTypep, sliceSelRangep};
                     sliceSelDTypep->isCompound(true);
                     sliceSelp->dtypep(sliceSelDTypep);
                     typeTablep->addTypesp(sliceSelDTypep);
@@ -612,15 +612,16 @@ class PathCtrlLogic final {
             m_dtypeCache.intDTypep
                 = new AstBasicDType{modp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
             m_dtypeCache.intDTypep->generic(true);
-            typeTablep->addTypesp(m_dtypeCache.intDTypep);   
+            typeTablep->addTypesp(m_dtypeCache.intDTypep);
         }
-        AstVar* loopVarp = new AstVar{modp->fileline(), VVarType::VAR, "i", m_dtypeCache.intDTypep};
+        AstVar* loopVarp
+            = new AstVar{modp->fileline(), VVarType::VAR, "i", m_dtypeCache.intDTypep};
         loopVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
         loopVarp->usedLoopIdx(true);
         AstVarRef* loopVarRefRp = new AstVarRef{modp->fileline(), loopVarp, VAccess::READ};
         // Create target path variable for the case selection and assignment
-        AstVar* targetVarp
-            = new AstVar{modp->fileline(), VVarType::VAR, "DPITARGETPATH", m_dtypeCache.stringDTypep};
+        AstVar* targetVarp = new AstVar{modp->fileline(), VVarType::VAR, "DPITARGETPATH",
+                                        m_dtypeCache.stringDTypep};
         targetVarp->hasUserInit();
         targetVarp->lifetime(VLifetime::STATIC_IMPLICIT);
         AstVarRef* targetVarRefWp = new AstVarRef{modp->fileline(), targetVarp, VAccess::WRITE};
@@ -645,9 +646,9 @@ class PathCtrlLogic final {
         pathFilterBeginp->addStmtsp(pathFilterCasep);
         // Create Loop to iterate over the different paths
         AstLoop* loopp = new AstLoop{modp->fileline(), nullptr};
-        AstLtS* ltsp
-            = new AstLtS{modp->fileline(), loopVarRefRp->cloneTree(false),
-                         new AstConst{modp->fileline(), 4}};  // TODO: Remove hardcoding of 4 here [2]
+        AstLtS* ltsp = new AstLtS{
+            modp->fileline(), loopVarRefRp->cloneTree(false),
+            new AstConst{modp->fileline(), 4}};  // TODO: Remove hardcoding of 4 here [2]
         AstLoopTest* loopTestp = new AstLoopTest{modp->fileline(), loopp, ltsp};
         AstAdd* addp = new AstAdd{modp->fileline(), loopVarRefRp->cloneTree(false),
                                   new AstConst{modp->fileline(), 1}};
@@ -742,8 +743,8 @@ class PathCtrlLogic final {
     }
 
 public:
-    PathCtrlLogic(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey, DTypeCache& dtypeCache,
-                  std::unordered_map<AstModule*, AstCase*>& caseCache)
+    PathCtrlLogic(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
+                  DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache)
         : m_netlistp(nodep)
         , m_insTarget(insTarget)
         , m_cfgKey(cfgKey)
@@ -780,7 +781,7 @@ class HookLogic final {
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::map<std::pair<AstVar*, AstNodeExpr*>, SelResEntry> m_rhsReplaceEntries;
-    std::unordered_map<AstModule*, AstCase*>& m_caseCache; // Provided by constructor
+    std::unordered_map<AstModule*, AstCase*>& m_caseCache;  // Provided by constructor
 
     // Methods
     AstAlways* createHandler(AstVar* hookedVarp, AstVar* targetVarp, AstVar* selResp,
@@ -932,10 +933,10 @@ class HookLogic final {
     }
     bool hasTargetFilter() {
         auto it = m_caseCache.find(m_targetModp);
-            if (it != m_caseCache.end() && it->second) {
-                m_casep = it->second;
-                return true;
-            }
+        if (it != m_caseCache.end() && it->second) {
+            m_casep = it->second;
+            return true;
+        }
         return false;
     }
     VBasicDTypeKwd getBasicDType(int rangeValue, AstBasicDType* basicDTypep) {
@@ -1231,8 +1232,7 @@ class HookLogic final {
 
 public:
     HookLogic(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
-              HookInsertEntry& targetEntry,
-              std::unordered_map<AstModule*, AstCase*>& caseCache,
+              HookInsertEntry& targetEntry, std::unordered_map<AstModule*, AstCase*>& caseCache,
               std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap)
         : m_targetModp(targetModule)
         , m_typeTablep(typeTablep)
@@ -1261,7 +1261,8 @@ public:
         if (!hasTargetFilter()) {
             insTargetFilter();
             insCaseItem(targetVarp);
-        } else insCaseItem(targetVarp);
+        } else
+            insCaseItem(targetVarp);
         m_targetEntry.done = true;
     }
 };
@@ -1319,7 +1320,8 @@ public:
                     m_netlistp->fileline()->v3error(
                         "Incomplete hook-insertion configuration for target '"
                         << key << "." << entry.origVarp
-                        << "'. Please check previous Errors from V3Instrument:findTargets and ensure"
+                        << "'. Please check previous Errors from V3Instrument:findTargets and "
+                           "ensure"
                         << " all necessary components are defined correctly.");
                     return;
                 }
@@ -1337,8 +1339,9 @@ public:
             // Insert hook logic for each entry
             for (auto& entry : target->entries) {
                 if (!existsEntry(target->origModp, entry.origVarp)) {
-                    HookLogic insHookLogic{target->origModp, typeTablep, target->dpiTriggerp,
-                                           entry, caseCache, selResMap};
+                    HookLogic insHookLogic{target->origModp,    typeTablep,
+                                           target->dpiTriggerp, entry,
+                                           caseCache,           selResMap};
                     insHookLogic.insert();
                 }
             }

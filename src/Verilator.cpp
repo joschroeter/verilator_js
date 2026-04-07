@@ -65,7 +65,7 @@
 #include "V3HierBlock.h"
 #include "V3Inline.h"
 #include "V3InlineCFuncs.h"
-#include "V3InsertHook.h"
+#include "V3InsertDPIHook.h"
 #include "V3Inst.h"
 #include "V3Interface.h"
 #include "V3LibMap.h"
@@ -228,8 +228,8 @@ static void process() {
         // Hook-insert design with the configurations given in .vlt file
         if (v3Global.insDPIHooks()) {
             v3Global.dpi(true);
-            V3InsertHook::findTargets(v3Global.rootp());
-            V3InsertHook::insertHooks(v3Global.rootp());
+            V3InsertDPIHook::findTargets(v3Global.rootp());
+            V3InsertDPIHook::insertHooks(v3Global.rootp());
         }
 
         // End of elaboration

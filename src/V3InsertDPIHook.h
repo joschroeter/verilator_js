@@ -14,8 +14,8 @@
 //
 //*************************************************************************
 
-#ifndef VERILATOR_V3INSERTHOOK_H_
-#define VERILATOR_V3INSERTHOOK_H_
+#ifndef VERILATOR_V3INSERTDPIHOOK_H_
+#define VERILATOR_V3INSERTDPIHOOK_H_
 
 #include "config_build.h"
 #include "verilatedos.h"
@@ -34,7 +34,7 @@ struct DTypeCache {
     AstUnpackArrayDType* partArraySelDTypep = nullptr;
 };
 
-class V3InsertHook final {
+class V3InsertDPIHook final {
 public:
     static void findTargets(AstNetlist* nodep) VL_MT_DISABLED;
     static void insertHooks(AstNetlist* nodep) VL_MT_DISABLED;

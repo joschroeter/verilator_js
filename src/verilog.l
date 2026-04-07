@@ -165,6 +165,8 @@ vnum    {vnum1}|{vnum2}|{vnum3}|{vnum4}|{vnum5}
   "tracing_on"          { FL; return yVLT_TRACING_ON; }
   "verilator_lib"       { FL; return yVLT_VERILATOR_LIB; }
 
+  -?"-bit-pos"          { FL; return yVLT_D_BITPOS; }
+  -?"-bit-range"        { FL; return yVLT_D_BITRANGE; }
   -?"-block"            { FL; return yVLT_D_BLOCK; }
   -?"-callback"         { FL; return yVLT_D_CALLBACK; }
   -?"-contents"         { FL; return yVLT_D_CONTENTS; }

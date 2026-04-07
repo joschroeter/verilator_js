@@ -866,6 +866,26 @@ public:
             return cost;
         }
     }
+    std::pair<std::optional<uint32_t>, std::optional<uint32_t>> getBitRange(const string& bitRange) {
+        // Helper for parsing a bit range string of the form "x:y" and returning the start and end positions as a pair of integers
+        const auto pos = bitRange.find(':');
+        if (pos == string::npos) {
+            m_profileFileLine->v3error("Invalid bit range format: '" << bitRange
+                                                                << "'. Expected format 'x:y'.");
+            return {std::nullopt, std::nullopt};
+        }
+        const uint32_t left = std::stoi(bitRange.substr(0, pos));
+        const uint32_t right = std::stoi(bitRange.substr(pos + 1));
+        if (left < 0 || right < 0) {
+            m_profileFileLine->v3error("Bit positions must be non-negative integers: '" << bitRange
+                                                                << "'.");
+            return {std::nullopt, std::nullopt};
+        }
+        if (right > left) {
+            v3warn(ASCRANGE, "Ascending bit range vector: left < right of bit range: " << bitRange);
+        }
+        return {left, right};
+    }
     // Helper for adding targets to the hook-insertion config map
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
         const auto pos = target.rfind('.');
@@ -888,7 +908,9 @@ public:
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         const auto varTarget = result.second;
-        HookInsertEntry entry{insID, insFunction, varTarget, {}, {}};
+        // bitRangeLeft & bitRangeLeft uninitialized since no bit range or bit position is
+        // targeted
+        HookInsertEntry entry{insID, std::nullopt, std::nullopt, callback, varTarget, {}, {}};
         const auto it = m_hookInsCfg.find(prefix);
         if (it != m_hookInsCfg.end()) {
             it->second.entries.push_back(entry);
@@ -897,6 +919,45 @@ public:
             HookInsertTarget newTarget;
             newTarget.entries.push_back(entry);
             m_hookInsCfg[prefix] = std::move(newTarget);
+        }
+    }
+    void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
+                       const string& target, const uint32_t bitPos) {
+        const auto result = splitPrefixAndVar(fl, target);
+        const auto prefix = result.first;
+        const auto varTarget = result.second;
+        // bitRangeLeft unitialized since no bit range but a bit position is targeted
+        HookInsertEntry entry{insID, std::nullopt, bitPos, callback, varTarget, {}, {}};
+        const auto it = m_hookInsCfg.find(prefix);
+        if (it != m_hookInsCfg.end()) {
+            it->second.entries.push_back(entry);
+        } else {
+            // Create a new entry in the map
+            HookInsertTarget newTarget;
+            newTarget.entries.push_back(entry);
+            m_hookInsCfg[prefix] = std::move(newTarget);
+        }
+    }
+    void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
+                       const string& target, const string& bitRange) {
+        const auto result = splitPrefixAndVar(fl, target);
+        const auto prefix = result.first;
+        const auto varTarget = result.second;
+        const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(bitRange);
+        if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
+            HookInsertEntry entry{insID, bitRangePos.first.value(), bitRangePos.second.value(), callback, varTarget, {}, {}};
+            const auto it = m_hookInsCfg.find(prefix);
+        if (it != m_hookInsCfg.end()) {
+            it->second.entries.push_back(entry);
+        } else {
+            // Create a new entry in the map
+            HookInsertTarget newTarget;
+            newTarget.entries.push_back(entry);
+            m_hookInsCfg[prefix] = std::move(newTarget);
+        }
+        } else {
+            // If the bit range is invalid, we should not proceed with adding the entry
+            return;
         }
     }
     std::map<string, HookInsertTarget>& getHookInsCfg() { return m_hookInsCfg; }
@@ -975,6 +1036,16 @@ void V3Control::addModulePragma(const string& module, VPragmaType pragma) {
 void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const uint32_t insID,
                               const string& target) {
     V3ControlResolver::s().addHookInsCfg(fl, insfunc, insID, target);
+}
+
+void V3Control::addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
+                              const string& target, const uint32_t bitPos) {
+    V3ControlResolver::s().addHookInsCfg(fl, callback, insID, target, bitPos);
+}
+
+void V3Control::addHookInsCfg(FileLine* fl, const string& insFunc, const uint32_t insID,
+                              const string& target, const string& bitRange) {
+    V3ControlResolver::s().addHookInsCfg(fl, insFunc, insID, target, bitRange);
 }
 
 void V3Control::addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost) {

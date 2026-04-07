@@ -24,7 +24,7 @@
 
 #include "V3PchAstNoMT.h"  // VL_MT_DISABLED_CODE_UNIT
 
-#include "V3InsertHook.h"
+#include "V3InsertDPIHook.h"
 
 #include "V3Control.h"
 #include "V3File.h"
@@ -836,17 +836,23 @@ class HookLogic final {
         funcp->addStmtsp(dpiTriggerp);
 
         //TODO: Nochmal anschauen ob man die if logic verbessern kann [4]
-        if (m_targetEntry.bitStartPos < 0 && m_targetEntry.bitEndPos >= 0) {
+        if (!m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
             AstVar* bitPos = new AstVar{funcp->fileline(), VVarType::PORT, "bitPos", m_idDTypep};
             bitPos->direction(VDirection::INPUT);
             bitPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
             bitPos->funcLocal(true);
             funcp->addStmtsp(bitPos);
-        } else if (m_targetEntry.bitStartPos >= 0 && m_targetEntry.bitEndPos >= 0) {
+        } else if (m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
             AstVar* bitStartPos
                 = new AstVar{funcp->fileline(), VVarType::PORT, "bitStartPos", m_idDTypep};
+            bitStartPos->direction(VDirection::INPUT);
+            bitStartPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+            bitStartPos->funcLocal(true);
             AstVar* bitEndPos
                 = new AstVar{funcp->fileline(), VVarType::PORT, "bitEndPos", m_idDTypep};
+            bitEndPos->direction(VDirection::INPUT);
+            bitEndPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+            bitEndPos->funcLocal(true);
             funcp->addStmtsp(bitStartPos);
             funcp->addStmtsp(bitEndPos);
         }
@@ -863,20 +869,20 @@ class HookLogic final {
                                 AstNodeExpr* drivingRhsp) {
         AstConst* constIDp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
                                           m_targetEntry.insID};
-        constIDp->dtypeChgSigned(true);
+        constIDp->dtypeChgSigned();
         AstVarRef* triggerRefp = new AstVarRef{funcRefp->fileline(), m_dpiTriggerp, VAccess::READ};
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constIDp});
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", triggerRefp});
-        if (m_targetEntry.bitStartPos < 0 && m_targetEntry.bitEndPos >= 0) {
+        if (!m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
             AstConst* constBitPosp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{},
-                                                  32, m_targetEntry.bitEndPos};
+                                                  32, m_targetEntry.bitRangeRight.value()};
             constBitPosp->dtypeChgSigned();
             funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitPosp});
-        } else if (m_targetEntry.bitStartPos >= 0 && m_targetEntry.bitEndPos >= 0) {
-            AstConst* constBitStartPosp = new AstConst{funcRefp->fileline(), AstConst::Signed32{},
-                                                       m_targetEntry.bitStartPos};
-            AstConst* constBitEndPosp = new AstConst{funcRefp->fileline(), AstConst::Signed32{},
-                                                     m_targetEntry.bitEndPos};
+        } else if (m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
+            AstConst* constBitStartPosp = new AstConst{funcRefp->fileline(), m_targetEntry.bitRangeLeft.value()};
+            constBitStartPosp->dtypeChgSigned();
+            AstConst* constBitEndPosp = new AstConst{funcRefp->fileline(), m_targetEntry.bitRangeRight.value()};
+            constBitEndPosp->dtypeChgSigned();
             funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitStartPosp});
             funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitEndPosp});
         }
@@ -1351,13 +1357,13 @@ public:
 //##################################################################################
 // Hook-insertion class functions
 
-void V3InsertHook::findTargets(AstNetlist* nodep) {
+void V3InsertDPIHook::findTargets(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { HookInsTargetFndrVisitor{nodep, V3Control::getHookInsCfg()}; }
     V3Global::dumpCheckGlobalTree("hookInsertFinder", 0, dumpTreeEitherLevel() >= 3);
 }
 
-void V3InsertHook::insertHooks(AstNetlist* nodep) {
+void V3InsertDPIHook::insertHooks(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     DPIHookInserterNew inserter{nodep, V3Control::getHookInsCfg()};
     inserter.insDPIHooks();

@@ -25,10 +25,14 @@
 #include "V3FileLine.h"
 #include "V3Mutex.h"
 
+#include <optional>
+
 //######################################################################
 // Store information for each hook insertion entry for each target string
 struct HookInsertEntry final {
     uint32_t insID;  // ID for switch case if multiple callback functions are used
+    std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
+    std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
     AstVar* origVarp;  // Original variable pointer
@@ -80,6 +84,10 @@ public:
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
     static void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
                               const string& target);
+    static void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
+                              const string& target, uint32_t bitPos);
+    static void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
+                              const string& target, const string& bitRange);
     static std::map<string, HookInsertTarget>& getHookInsCfg();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);

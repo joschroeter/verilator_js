@@ -260,7 +260,6 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                           "'__.instance.var'");
         }
     }
-
     void visit(AstCell* nodep) override {
         if (m_initModp) {
             if (nodep->modp() == m_cellModp) {
@@ -279,7 +278,6 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             iterateChildren(nodep);
         }
     }
-
     void visit(AstVar* nodep) override {
         if (m_targetModp) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
@@ -390,6 +388,8 @@ public:
             VL_RESTORER(m_error);
             VL_RESTORER(m_targetModp);
             VL_RESTORER(m_modp);
+            VL_RESTORER(m_assignNode);
+            VL_RESTORER(m_cellModp);
             // Set initial flag values
             m_target = pair.first;
             m_currHier = "";
@@ -1273,7 +1273,7 @@ public:
     }
 };
 
-class DPIHookInserterNew final {
+class DPIHookInserter final {
     // Members
     AstNetlist* m_netlistp;
     std::map<std::string, HookInsertTarget>& m_insCfg;
@@ -1290,7 +1290,7 @@ class DPIHookInserterNew final {
     }
 
 public:
-    DPIHookInserterNew(AstNetlist* nodep, std::map<std::string, HookInsertTarget>& insCfg)
+    DPIHookInserter(AstNetlist* nodep, std::map<std::string, HookInsertTarget>& insCfg)
         : m_netlistp(nodep)
         , m_insCfg(insCfg) {}
 
@@ -1365,7 +1365,7 @@ void V3InsertDPIHook::findTargets(AstNetlist* nodep) {
 
 void V3InsertDPIHook::insertHooks(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
-    DPIHookInserterNew inserter{nodep, V3Control::getHookInsCfg()};
+    DPIHookInserter inserter{nodep, V3Control::getHookInsCfg()};
     inserter.insDPIHooks();
     V3Global::dumpCheckGlobalTree("hookInsertFunction", 0, dumpTreeEitherLevel() >= 3);
 }

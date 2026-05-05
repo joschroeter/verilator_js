@@ -900,8 +900,7 @@ public:
         return {prefix, varTarget};
     }
     // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
-    void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
-                       const string& target) {
+    void addHookInsCfg(FileLine* fl, const string& callback, const string& target) {
         // Implement custom iterator to remove the last part of the target and insert it into the
         // vector of the map If the target string is the same as one already in the map, push the
         // var to the vector
@@ -910,7 +909,7 @@ public:
         const auto varTarget = result.second;
         // bitRangeLeft & bitRangeLeft uninitialized since no bit range or bit position is
         // targeted
-        HookInsertEntry entry{insID, std::nullopt, std::nullopt, callback, varTarget, {}, {}};
+        HookInsertEntry entry{std::nullopt, std::nullopt, callback, varTarget, {}, {}};
         const auto it = m_hookInsCfg.find(prefix);
         if (it != m_hookInsCfg.end()) {
             it->second.entries.push_back(entry);
@@ -921,13 +920,13 @@ public:
             m_hookInsCfg[prefix] = std::move(newTarget);
         }
     }
-    void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
-                       const string& target, const uint32_t bitPos) {
+    void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
+                       const uint32_t bitPos) {
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         const auto varTarget = result.second;
         // bitRangeLeft unitialized since no bit range but a bit position is targeted
-        HookInsertEntry entry{insID, std::nullopt, bitPos, callback, varTarget, {}, {}};
+        HookInsertEntry entry{std::nullopt, bitPos, callback, varTarget, {}, {}};
         const auto it = m_hookInsCfg.find(prefix);
         if (it != m_hookInsCfg.end()) {
             it->second.entries.push_back(entry);
@@ -938,14 +937,14 @@ public:
             m_hookInsCfg[prefix] = std::move(newTarget);
         }
     }
-    void addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
-                       const string& target, const string& bitRange) {
+    void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
+                       const string& bitRange) {
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         const auto varTarget = result.second;
         const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(bitRange);
         if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
-            HookInsertEntry entry{insID, bitRangePos.first.value(), bitRangePos.second.value(), callback, varTarget, {}, {}};
+            HookInsertEntry entry{bitRangePos.first.value(), bitRangePos.second.value(), callback, varTarget, {}, {}};
             const auto it = m_hookInsCfg.find(prefix);
         if (it != m_hookInsCfg.end()) {
             it->second.entries.push_back(entry);
@@ -1033,19 +1032,18 @@ void V3Control::addModulePragma(const string& module, VPragmaType pragma) {
     V3ControlResolver::s().modules().at(module).addModulePragma(pragma);
 }
 
-void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const uint32_t insID,
-                              const string& target) {
-    V3ControlResolver::s().addHookInsCfg(fl, insfunc, insID, target);
+void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const string& target) {
+    V3ControlResolver::s().addHookInsCfg(fl, insfunc, target);
 }
 
-void V3Control::addHookInsCfg(FileLine* fl, const string& callback, const uint32_t insID,
-                              const string& target, const uint32_t bitPos) {
-    V3ControlResolver::s().addHookInsCfg(fl, callback, insID, target, bitPos);
+void V3Control::addHookInsCfg(FileLine* fl, const string& callback, const string& target,
+                              const uint32_t bitPos) {
+    V3ControlResolver::s().addHookInsCfg(fl, callback, target, bitPos);
 }
 
-void V3Control::addHookInsCfg(FileLine* fl, const string& insFunc, const uint32_t insID,
-                              const string& target, const string& bitRange) {
-    V3ControlResolver::s().addHookInsCfg(fl, insFunc, insID, target, bitRange);
+void V3Control::addHookInsCfg(FileLine* fl, const string& insFunc, const string& target, 
+                              const string& bitRange) {
+    V3ControlResolver::s().addHookInsCfg(fl, insFunc, target, bitRange);
 }
 
 void V3Control::addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost) {

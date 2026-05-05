@@ -134,6 +134,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             }
         }
         iterateChildren(assignp);
+        m_assignNode = false;
     }
     void setError(const string& target) {
         const auto it = m_insCfg.find(target);
@@ -275,8 +276,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             }
         } else if (m_modp && nodep->modp() == m_cellModp) {
             setCells(nodep, m_target);
-            iterateChildren(nodep);
         }
+        iterateChildren(nodep);
     }
     void visit(AstVar* nodep) override {
         if (m_targetModp) {
@@ -364,7 +365,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         if (m_targetModp && !m_assignNode) {
             const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
             for (const auto& entry : target.entries) {
-                if (nodep->varp()->name() == entry.varTarget) {
+                if (nodep->varp()->name() == entry.varTarget && nodep->access() == VAccess::READ) {
                     setVarRefs(nodep, m_target, entry.varTarget);
                 }
             }
@@ -436,6 +437,14 @@ class PathCtrlLogic final {
         initialBeginp->addStmtsp(delayp);
         loopp->addStmtsp(initialBeginp);
         return loopp;
+    }
+    AstVar* addCaseId(AstModule* modp) {
+        AstVar* caseIdp = nullptr;
+        caseIdp = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_CASE_ID", VFlagLogicPacked{}, 32};
+        caseIdp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+        caseIdp->direction(VDirection::INPUT);
+        modp->addStmtsp(caseIdp);
+        return caseIdp;
     }
     AstVar* createDPIHookPathp(AstModule* modp, int idx, bool isInitModp = false,
                                bool isOrigModp = false) {
@@ -604,7 +613,17 @@ class PathCtrlLogic final {
             }
         }
     }
-    void addPathFilter(AstModule* modp, AstVar* hookPathp, int idx) {
+    void addCaseIdPin(AstCell* cellp, int idx,
+                        const std::vector<AstVar*>& dpihookCaseIdps) {
+        int pinNum = 0;
+        for (AstNode* cellPinp = cellp->pinsp(); cellPinp; cellPinp = cellPinp->nextp()) pinNum++;
+        AstVarRef* caseIdVarRef
+            = new AstVarRef{cellp->fileline(), dpihookCaseIdps[idx], VAccess::READ};
+        AstPin* pinp = new AstPin{cellp->fileline(), pinNum, "DPIHOOK_CASE_ID", caseIdVarRef};
+        pinp->modVarp(dpihookCaseIdps[idx+1]);
+        pinp->svDotName(true);
+        cellp->addPinsp(pinp);
+    }
         AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         // Add filter logic providing path information to the modules/instances
         // Create the loop variable index
@@ -704,7 +723,7 @@ class PathCtrlLogic final {
         int idx = 0;
         for (AstCell* cellp : m_insTarget.cellps) {
             if (prevCellp && cellp->modp() != prevCellp->modp()) { idx++; }
-            if (!hasSelInput(cellp)) addSelPin(cellp, idx);
+            if (!hasInputPin(cellp, "DPIHOOK_CASE_ID")) addCaseIdPin(cellp, idx, dpihookCaseIdps);
             prevCellp = cellp;
         }
     }
@@ -712,12 +731,15 @@ class PathCtrlLogic final {
         AstModule* origModp = m_insTarget.origModp;
         size_t idx = 0;
         for (AstModule* modp : m_insTarget.modps) {
-            if (!hasSelInput(modp)) addSelInput(modp, m_cfgKey, idx);
-            if (!hasPathFilter(modp)) addPathFilter(modp, m_dpihookPathp, idx);
+            AstVar* hookCaseId = findExistingInputVar(modp, "DPIHOOK_CASE_ID");
+            if (!hookCaseId) hookCaseId = addCaseId(modp);
+            dpihookCaseIdps.push_back(hookCaseId);
             m_dtypeCache.partArraySelDTypep = nullptr;
             idx++;
         }
-        if (!hasSelInput(origModp)) addSelInput(origModp, m_cfgKey, idx);
+        AstVar* origCaseIdp = findExistingInputVar(origModp, "DPIHOOK_CASE_ID");
+        if (!origCaseIdp) origCaseIdp = addCaseId(origModp);
+        dpihookCaseIdps.push_back(origCaseIdp);
     }
     void insDPITrigger2Modp() {
         AstModule* origModp = m_insTarget.origModp;
@@ -867,11 +889,13 @@ class HookLogic final {
     }
     AstFuncRef* finalizeFuncRef(AstFuncRef* funcRefp, AstVar* targetVarp,
                                 AstNodeExpr* drivingRhsp) {
-        AstConst* constIDp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
-                                          m_targetEntry.insID};
-        constIDp->dtypeChgSigned();
+        AstVar* caseIdp = getCaseIdp(m_targetModp);
+        AstVarRef* caseIdRefp = new AstVarRef{funcRefp->fileline(), caseIdp, VAccess::READ};
+        //AstConst* constIDp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
+        //                                  m_targetEntry.insID};
+        //constIDp->dtypeChgSigned();
         AstVarRef* triggerRefp = new AstVarRef{funcRefp->fileline(), m_dpiTriggerp, VAccess::READ};
-        funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constIDp});
+        funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", caseIdRefp});
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", triggerRefp});
         if (!m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
             AstConst* constBitPosp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{},
@@ -926,6 +950,14 @@ class HookLogic final {
             if (varp && varp->isInput() && varp->name() == "DPIHOOK_PATH") { return varp; }
         }
         //TODO: Fehler, wenn was nicht passt aber das sollte ja eigentlich nicht passieren [3]
+        return nullptr;
+    }
+    AstVar* getCaseIdp(AstModule* modp) {
+        for (AstNode* stmtsp = modp->stmtsp(); stmtsp; stmtsp = stmtsp->nextp()) {
+            AstVar* varp = VN_CAST(stmtsp, Var);
+            if (!varp) continue;
+            if (varp->isInput() && varp->name() == "DPIHOOK_CASE_ID") return varp;
+        }
         return nullptr;
     }
     bool hasFuncOrTask() {

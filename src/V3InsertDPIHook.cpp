@@ -1130,30 +1130,23 @@ class DPIOverrideBuilder final {
         if (targetVarp->direction() != VDirection::NONE) {
             hookedVarp->direction(VDirection::NONE);
         }
-        int idx = 0;
-        if (targetVarp->isOutputish()) {
-            AstVar* hookedVarpI = hookedVarp->cloneTree(false);
-            if (m_selResMap.empty() && m_rhsReplaceEntries.empty()) {
-                m_targetModp->addStmtsp(hookedVarp);
-                return;
-            }
-            for (auto& [key, entry] : m_selResMap) {
-                if (key.first == targetVarp) {
-                    hookedVarpI->name(hookedVarp->name() + "I" + std::to_string(idx));
-                    m_targetModp->addStmtsp(hookedVarpI);
-                    m_selResMap[key].hookedVarp = hookedVarpI;
-                    idx++;
-                }
-            }
-            for (auto& [key, entry] : m_rhsReplaceEntries) {
-                hookedVarpI->name(hookedVarp->name() + "I" + std::to_string(idx));
-                m_targetModp->addStmtsp(hookedVarpI);
-                m_rhsReplaceEntries[key].hookedVarp = hookedVarpI;
-                idx++;
-            }
+        if (!targetVarp->isOutputish() || (m_selResMap.empty() && m_rhsReplaceEntries.empty())) {
+            m_targetModp->addStmtsp(hookedVarp);
             return;
         }
-        m_targetModp->addStmtsp(hookedVarp);
+        int idx = 0;
+        auto addClone = [&](AstVar*& dstHookedVarp) {
+            AstVar* clonep = hookedVarp->cloneTree(false);
+            clonep->name(hookedVarp->name() + "I" + std::to_string(idx++));
+            m_targetModp->addStmtsp(clonep);
+            dstHookedVarp = clonep;
+        };
+        for (auto& [key, entry] : m_selResMap) {
+            if (key.first == targetVarp) addClone(entry.hookedVarp);
+        }
+        for (auto& [key, entry] : m_rhsReplaceEntries) {
+            addClone(entry.hookedVarp);
+        }
     }
     AstCase* insTargetFilter() {
         AstVar* hookPathp = findPathVarp();

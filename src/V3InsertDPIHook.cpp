@@ -30,7 +30,6 @@
 #include "V3File.h"
 
 #include <iostream>
-#include <regex>
 #include <vector>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
@@ -72,7 +71,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     }
     // Check if the given current Hierarchy matches the top module of the target (Pos: 0)
     bool targetHasTop(const string& currHier, const string& target) {
-        return currHier == reduce2Depth(split(target), KeyDepth::TopModule);
+        return currHier == split_by_dots(target)[0];
     }
     // In the target string a part is considered the module/instance name seperated by a dot from
     // the next one returns the amount of these parts to get a range for the selector input
@@ -87,23 +86,15 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         return dots + 1;
     }
     // Split given string by '.' and return a vector of tokens
-    std::vector<std::string> split(const std::string& str) {
-        static const std::regex dot_regex("\\.");
-        const std::sregex_token_iterator iter(str.begin(), str.end(), dot_regex, -1);
-        std::sregex_token_iterator end;
-        return std::vector<std::string>(iter, end);
-    }
-    // Reduce given key to a certain hierarchy level.
-    enum class KeyDepth { TopModule = 0, RelevantModule = 1, Instance = 2, FullKey = 3 };
-    string reduce2Depth(const std::vector<std::string> keyTokens, const KeyDepth hierarchyLevel) {
-        std::string reducedKey = keyTokens[0];
-        if (hierarchyLevel == KeyDepth::TopModule) {
-            return keyTokens[0];
-        } else {
-            int d = static_cast<int>(hierarchyLevel);
-            for (size_t i = 1; i < keyTokens.size() - d; ++i) reducedKey += "." + keyTokens[i];
-            return reducedKey;
+    std::vector<std::string> split_by_dots(const std::string& str) {
+        std::vector<std::string> tokens;
+        size_t pos = 0, next;
+        while ((next = str.find('.', pos)) != std::string::npos) {
+            tokens.push_back(str.substr(pos, next - pos));
+            pos = next + 1;
         }
+        tokens.push_back(str.substr(pos));
+        return tokens;
     }
     void iterateAssigns(AstNodeAssign* assignp, const string& target, const string& varName,
                         bool isOutput) {

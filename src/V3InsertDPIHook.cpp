@@ -47,7 +47,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     bool m_error = false;
     bool m_foundCellp = false;
     bool m_foundVarp = false;
-    bool m_initModp = true;  // If the visitor is in the first module node of the netlist
+    bool m_foundTopMod = true;  // If the visitor is in the first module node of the netlist
     std::map<std::string, HookInsertTarget>& m_insCfg;
     string m_currHier;
     string m_target;
@@ -194,7 +194,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     }
     // VISITORS
     void visit(AstModule* nodep) override {
-        if (m_initModp) {
+        if (m_foundTopMod) {
             bool foundModp = false;
             if (targetHasTop(nodep->name(), m_target)) {
                 foundModp = true;
@@ -215,13 +215,13 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                 }
                 setModules(nodep, m_target);
                 iterateChildren(nodep);  // Continue to Cell/Var nodes
-                m_initModp = false;
+                m_foundTopMod = false;
             } else if (!foundModp && nodep->name() == "@CONST-POOL@") {
                 nodep->fileline()->v3error("DPI-hook insertion of target '"
                                            << m_target
                                            << "' could not find initial 'module' in "
                                               "'topModule.instance.__'");
-                m_initModp = false;
+                m_foundTopMod = false;
                 m_error = true;
             }
         } else if (m_cellModp  // Find module pointed to by the cell from cell visitor
@@ -262,7 +262,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
     }
     void visit(AstCell* nodep) override {
-        if (m_initModp) {
+        if (m_foundTopMod) {
             if (nodep->modp() == m_cellModp) {
                 setCells(nodep, m_target);
                 iterateChildren(nodep);
@@ -272,7 +272,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                            << "' could not find initial 'instance' in "
                                               "'topModule.instance.__'");
                 m_error = true;
-                m_initModp = false;
+                m_foundTopMod = false;
             }
         } else if (m_modp && nodep->modp() == m_cellModp) {
             setCells(nodep, m_target);
@@ -383,7 +383,7 @@ public:
         : m_netlistp(nodep)
         , m_insCfg(insCfg) {
         for (const auto& pair : m_insCfg) {
-            VL_RESTORER(m_initModp);
+            VL_RESTORER(m_foundTopMod);
             VL_RESTORER(m_foundCellp);
             VL_RESTORER(m_foundVarp);
             VL_RESTORER(m_error);

@@ -99,28 +99,14 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     void iterateAssigns(AstNodeAssign* assignp, const string& target, const string& varName,
                         bool isOutput) {
         m_assignNode = true;
-        if (isOutput) {
-            AstNodeExpr* lhsp = assignp->lhsp();
-            if (AstVarRef* varrefp = VN_CAST(lhsp, VarRef)) {
-                if (varrefp->varp()->name() == varName) { setAssigns(assignp, target, varName); }
-            } else {
-                for (AstVarRef* level1p = VN_CAST(lhsp->op1p(), VarRef); level1p;
-                     level1p = VN_CAST(level1p->nextp(), VarRef)) {
-                    if (level1p->varp()->name() == varName) {
-                        setAssigns(assignp, target, varName);
-                    }
-                }
-            }
+        AstNodeExpr* exprp = isOutput ? assignp->lhsp() : assignp->rhsp();
+        if (AstVarRef* varrefp = VN_CAST(exprp, VarRef)) {
+            if (varrefp->varp()->name() == varName) { setAssigns(assignp, target, varName); }
         } else {
-            AstNodeExpr* rhsp = assignp->rhsp();
-            if (AstVarRef* varrefp = VN_CAST(rhsp, VarRef)) {
-                if (varrefp->varp()->name() == varName) { setAssigns(assignp, target, varName); }
-            } else {
-                for (AstVarRef* level1p = VN_CAST(rhsp->op1p(), VarRef); level1p;
-                     level1p = VN_CAST(level1p->nextp(), VarRef)) {
-                    if (level1p->varp()->name() == varName) {
-                        setAssigns(assignp, target, varName);
-                    }
+            for (AstVarRef* level1p = VN_CAST(exprp->op1p(), VarRef); level1p;
+                 level1p = VN_CAST(level1p->nextp(), VarRef)) {
+                if (level1p->varp()->name() == varName) {
+                    setAssigns(assignp, target, varName);
                 }
             }
         }

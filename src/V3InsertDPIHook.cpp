@@ -1102,6 +1102,13 @@ class DPIOverrideBuilder final {
                 m_taskp->prototype(true);
                 m_targetModp->addStmtsp(m_taskp);
             }
+            if(!funcp && !taskp) {
+                m_targetModp->fileline()->v3error(
+                    "Failed to create DPI interface for variable: '"
+                    << m_targetEntry.origVarp->name() << "'"
+                );
+                return;
+            }
         }
     }
     void insFuncHandler(AstVar* hookedVarp, AstVar* targetVarp) {

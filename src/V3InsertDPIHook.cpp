@@ -75,8 +75,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         return false;
     }
     // Check if the given current Hierarchy matches the top module of the target (Pos: 0)
-    bool targetHasTop(const string& currHier, const string& target) {
-        return currHier == split_by_dots(target)[0];
+    bool targetHasTop(const string& target) {
+        return v3Global.rootp()->topModulep()->name() == VString::split(target, '.')[0];
     }
     // In the target string a part is considered the module/instance name seperated by a dot from
     // the next one returns the amount of these parts to get a range for the selector input
@@ -178,7 +178,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     void visit(AstModule* nodep) override {
         if (m_foundTopMod) {
             bool foundModp = false;
-            if (targetHasTop(nodep->name(), m_target)) {
+            if (targetHasTop(m_target)) {
                 foundModp = true;
                 m_modp = nodep;
                 m_currHier = nodep->name();

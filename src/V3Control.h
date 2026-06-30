@@ -34,8 +34,8 @@ struct HookInsertEntry final {
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
-    AstVar* origVarp;  // Original variable pointer
-    AstVar* dpiHookedVarp;  // Cloned variable pointer from original variable pointer with edits
+    AstVar* origVarp = nullptr;  // Original variable pointer
+    AstVar* dpiHookedVarp = nullptr;  // Cloned variable pointer from original variable pointer with edits
     std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
     std::vector<AstVarRef*> varRefps;  // VarRef nodes which should be edited later on
     bool found = false;  // Whether the target variable was found during data finder pass
@@ -43,7 +43,7 @@ struct HookInsertEntry final {
 };
 // Store all information needed for hook insertion per target string
 struct HookInsertTarget final {
-    AstModule* origModp;  // Original module pointer containing target var
+    AstModule* origModp = nullptr;  // Original module pointer containing target var
     AstVar* dpiTriggerp = nullptr;  // Trigger for the DPI function/task
     bool error = false;  // Whether an error occurred during the finder visitor
     bool processed = false;  // Whether the data finder pass has processed this target

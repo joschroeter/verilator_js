@@ -34,6 +34,11 @@
 
 VL_DEFINE_DEBUG_FUNCTIONS;
 
+// Maximum number of DPI hook targets that can be handled simultaneously; the DPIHOOK_PATH
+// array is sized to this many slots, and the loop variable indexing into it is sized to match.
+static constexpr int DPIHOOK_MAX_TARGETS = 4;
+static constexpr int DPIHOOK_MAX_TARGETS_BITS = 2;  // ceil(log2(DPIHOOK_MAX_TARGETS))
+
 //##################################################################################
 // Collect nodes and data from the AST for hook-insertion
 class HookInsTargetFndrVisitor final : public VNVisitor {
@@ -444,7 +449,8 @@ class HookPathRouter final {
                 modp->fileline(), m_dtypeCache.stringDTypep, new AstRange{modp->fileline(), 0, 0}};
             partsDTypep->isCompound(true);
             AstUnpackArrayDType* pathsDTypep = new AstUnpackArrayDType{
-                modp->fileline(), m_dtypeCache.stringDTypep, new AstRange{modp->fileline(), 3, 0}};
+                modp->fileline(), m_dtypeCache.stringDTypep,
+                new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
             pathsDTypep->isCompound(true);
             pathsDTypep->refDTypep(partsDTypep);
             typeTablep->addTypesp(partsDTypep);
@@ -464,7 +470,7 @@ class HookPathRouter final {
         partsDTypep->isCompound(true);
         AstUnpackArrayDType* pathsDTypep = new AstUnpackArrayDType{
             modp->fileline(), m_dtypeCache.stringDTypep,
-            new AstRange{modp->fileline(), 3, 0}};  //TODO: Remove hardcoding of 3 here [2]
+            new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
         pathsDTypep->isCompound(true);
         pathsDTypep->refDTypep(partsDTypep);
         typeTablep->addTypesp(partsDTypep);
@@ -522,8 +528,7 @@ class HookPathRouter final {
                     partsDTypep->isCompound(true);
                     AstUnpackArrayDType* pathsDTypep = new AstUnpackArrayDType{
                         modp->fileline(), partsDTypep,
-                        new AstRange{modp->fileline(), 3,
-                                     0}};  //TODO: Remove hardcoding of 3 here [2]
+                        new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
                     pathsDTypep->isCompound(true);
                     pathsDTypep->refDTypep(partsDTypep);
                     AstVar* instPathVarp = new AstVar{modp->fileline(), VVarType::VAR,
@@ -540,7 +545,8 @@ class HookPathRouter final {
                         = new AstCvtPackString{modp->fileline(), constPackStringp};
                     cvtPackStringp->dtypep(m_dtypeCache.stringDTypep);
                     AstSel* selp = new AstSel{modp->fileline(), loopVarRefp->cloneTree(false),
-                                              new AstConst{modp->fileline(), 0}, 2};
+                                              new AstConst{modp->fileline(), 0},
+                                              DPIHOOK_MAX_TARGETS_BITS};
                     AstVarRef* hookPathRefp
                         = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
                     AstArraySel* partSelp = new AstArraySel{modp->fileline(), hookPathRefp, selp};
@@ -625,7 +631,7 @@ class HookPathRouter final {
         insertCaseItems(modp, pathFilterCasep, hookPathp, loopVarRefRp, idx, instPathVarps);
         // Create Assign for the target path
         AstSel* selp = new AstSel{modp->fileline(), loopVarRefRp->cloneTree(false),
-                                  new AstConst{modp->fileline(), 0}, 2};
+                                  new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
         AstVarRef* hookPathRefp = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
         AstArraySel* partArraySelp = new AstArraySel{modp->fileline(), hookPathRefp, selp};
         partArraySelp->dtypep(m_dtypeCache.partArraySelDTypep);
@@ -640,7 +646,7 @@ class HookPathRouter final {
         AstLoop* loopp = new AstLoop{modp->fileline(), nullptr};
         AstLtS* ltsp = new AstLtS{
             modp->fileline(), loopVarRefRp->cloneTree(false),
-            new AstConst{modp->fileline(), 4}};  // TODO: Remove hardcoding of 4 here [2]
+            new AstConst{modp->fileline(), DPIHOOK_MAX_TARGETS}};
         AstLoopTest* loopTestp = new AstLoopTest{modp->fileline(), loopp, ltsp};
         AstAdd* addp = new AstAdd{modp->fileline(), loopVarRefRp->cloneTree(false),
                                   new AstConst{modp->fileline(), 1}};
@@ -1181,7 +1187,8 @@ class DPIOverrideBuilder final {
         m_caseCache.insert({m_targetModp, casep});
         // Create Assign for the target path
         AstSel* selp = new AstSel{m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
-                                  new AstConst{m_targetModp->fileline(), 0}, 2};
+                                  new AstConst{m_targetModp->fileline(), 0},
+                                  DPIHOOK_MAX_TARGETS_BITS};
         AstVarRef* hookPathRefp
             = new AstVarRef{m_targetModp->fileline(), hookPathp, VAccess::READ};
         AstArraySel* pathArraySelp = new AstArraySel{m_targetModp->fileline(), hookPathRefp, selp};
@@ -1199,7 +1206,7 @@ class DPIOverrideBuilder final {
         AstLoop* loopp = new AstLoop{m_targetModp->fileline(), nullptr};
         AstLtS* ltsp = new AstLtS{
             m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
-            new AstConst{m_targetModp->fileline(), 4}};  // TODO: Remove hardcoding of 4 here
+            new AstConst{m_targetModp->fileline(), DPIHOOK_MAX_TARGETS}};
         AstLoopTest* loopTestp = new AstLoopTest{m_targetModp->fileline(), loopp, ltsp};
         AstAdd* addp = new AstAdd{m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
                                   new AstConst{m_targetModp->fileline(), 1}};

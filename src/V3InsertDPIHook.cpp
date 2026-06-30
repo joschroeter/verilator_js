@@ -1056,24 +1056,19 @@ class DPIOverrideBuilder final {
                 createAssignp(targetVarp);
                 return;
             }
-            for (auto& [key, entry] : m_selResMap) {
-                if (key.first == targetVarp) {
-                    AstVar* selRespI = m_selResp->cloneTree(false);
-                    selRespI->name(m_selResp->name() + "I" + std::to_string(idx));
-                    m_targetModp->addStmtsp(selRespI);
-                    entry.selResp = selRespI;
-                    editAssignp(targetVarp, selRespI);
-                    editVarRefp();
-                }
-            }
-            for (auto& [key, entry] : m_rhsReplaceEntries) {
+            auto applyEntry = [&](SelResEntry& entry) {
                 AstVar* selRespI = m_selResp->cloneTree(false);
                 selRespI->name(m_selResp->name() + "I" + std::to_string(idx));
                 m_targetModp->addStmtsp(selRespI);
-                m_rhsReplaceEntries[key].selResp = selRespI;
+                entry.selResp = selRespI;
                 editAssignp(targetVarp, selRespI);
                 editVarRefp();
+                //idx++;
+            };
+            for (auto& [key, entry] : m_selResMap) {
+                if (key.first == targetVarp) { applyEntry(entry); }
             }
+            for (auto& [key, entry] : m_rhsReplaceEntries) { applyEntry(entry); }
             return;
         }
         m_targetModp->addStmtsp(m_selResp);

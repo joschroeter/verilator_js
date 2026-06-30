@@ -888,6 +888,7 @@ public:
     }
     // Helper for adding targets to the hook-insertion config map
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
+        // Check if the instrumentation config wants to insert a hook into a variable in the top module
         const auto pos = target.rfind('.');
         // Error MSG if the hook-insertion of the top module is not possible
         if ((std::count(target.begin(), target.end(), '.') < 2)) {

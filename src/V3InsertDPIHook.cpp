@@ -398,7 +398,7 @@ public:
 
 //##################################################################################
 // Do the hook-insertion transformations
-class PathCtrlLogic final {
+class HookPathRouter final {
     // Members
     AstNetlist* m_netlistp = nullptr;
     const string m_cfgKey;
@@ -754,7 +754,7 @@ class PathCtrlLogic final {
     }
 
 public:
-    PathCtrlLogic(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
+    HookPathRouter(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
                   DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache)
         : m_netlistp(nodep)
         , m_insTarget(insTarget)
@@ -773,7 +773,7 @@ public:
     }
 };
 
-class HookLogic final {
+class DPIOverrideBuilder final {
     struct RhsReplaceEntry {
         AstNodeExpr* rhsp;
         AstVar* hookedVarp;
@@ -1258,7 +1258,7 @@ class HookLogic final {
     }
 
 public:
-    HookLogic(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
+    DPIOverrideBuilder(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
               HookInsertEntry& targetEntry, std::unordered_map<AstModule*, AstCase*>& caseCache,
               std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap)
         : m_targetModp(targetModule)
@@ -1339,8 +1339,8 @@ public:
                 return;
             }
             // PathModule anpassen
-            PathCtrlLogic insPathCrtlLogic{m_netlistp, *target, key, dtypeCache, caseCache};
-            insPathCrtlLogic.insert();
+            HookPathRouter insPathRouter{m_netlistp, *target, key, dtypeCache, caseCache};
+            insPathRouter.insert();
             // Validate all entries before sorting
             for (auto& entry : target->entries) {
                 if (!entry.found) {
@@ -1366,10 +1366,10 @@ public:
             // Insert hook logic for each entry
             for (auto& entry : target->entries) {
                 if (!existsEntry(target->origModp, entry.origVarp)) {
-                    HookLogic insHookLogic{target->origModp,    typeTablep,
+                    DPIOverrideBuilder insDPIOverrideBuilder{target->origModp,    typeTablep,
                                            target->dpiTriggerp, entry,
                                            caseCache,           selResMap};
-                    insHookLogic.insert();
+                    insDPIOverrideBuilder.insert();
                 }
             }
         }

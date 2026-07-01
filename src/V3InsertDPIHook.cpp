@@ -781,7 +781,6 @@ class DPIOverrideBuilder final {
     };
     // Members
     AstBasicDType* m_idDTypep = nullptr;
-    AstCase* m_casep = nullptr;
     AstModule* m_targetModp;  // Provided by constructor
     AstFunc* m_funcp = nullptr;
     AstTask* m_taskp = nullptr;
@@ -958,13 +957,9 @@ class DPIOverrideBuilder final {
         }
         return false;
     }
-    bool hasTargetFilter() {
+    AstCase* findTargetFilter() const {
         auto it = m_caseCache.find(m_targetModp);
-        if (it != m_caseCache.end() && it->second) {
-            m_casep = it->second;
-            return true;
-        }
-        return false;
+        return it != m_caseCache.end() ? it->second : nullptr;
     }
     VBasicDTypeKwd getBasicDType(int rangeValue, AstBasicDType* basicDTypep) {
         VBasicDTypeKwd kwd;
@@ -1049,7 +1044,7 @@ class DPIOverrideBuilder final {
             }
         }
     }
-    void insCaseItem(AstVar* targetVarp) {
+    void insCaseItem(AstVar* targetVarp, AstCase* casep) {
         AstConst* constPackStringp = new AstConst{
             m_targetModp->fileline(), AstConst::VerilogStringLiteral{}, targetVarp->name()};
         AstCvtPackString* cvtPackStringp
@@ -1060,7 +1055,7 @@ class DPIOverrideBuilder final {
                                            new AstConst{m_targetModp->fileline(), 1}};
         AstCaseItem* caseItemp
             = new AstCaseItem{m_targetModp->fileline(), cvtPackStringp, assignp};
-        m_casep->addItemsp(caseItemp);
+        casep->addItemsp(caseItemp);
     }
     void insCondResVarp(AstVar* hookedVarp, AstVar* targetVarp) {
         m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
@@ -1174,7 +1169,7 @@ class DPIOverrideBuilder final {
         }
         m_targetModp->addStmtsp(hookedVarp);
     }
-    void insTargetFilter() {
+    AstCase* insTargetFilter() {
         AstVar* hookPathp = findPathVarp();
         // Add filter logic providing path information to the modules/instances
         // Create the loop variable index
@@ -1200,9 +1195,9 @@ class DPIOverrideBuilder final {
         AstVarRef* targetVarRefRp
             = new AstVarRef{m_targetModp->fileline(), targetVarp, VAccess::READ};
         // Create Case with Case items
-        m_casep
+        AstCase* casep
             = new AstCase{m_targetModp->fileline(), VCaseType::CT_CASE, targetVarRefRp, nullptr};
-        m_caseCache.insert({m_targetModp, m_casep});
+        m_caseCache.insert({m_targetModp, casep});
         // Create Assign for the target path
         AstSel* selp = new AstSel{m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
                                   new AstConst{m_targetModp->fileline(), 0}, 2};
@@ -1218,7 +1213,7 @@ class DPIOverrideBuilder final {
         AstBegin* pathFilterBeginp = new AstBegin{m_targetModp->fileline(), "", nullptr, false};
         pathFilterBeginp->addDeclsp(targetVarp);
         pathFilterBeginp->addStmtsp(caseAssignp);
-        pathFilterBeginp->addStmtsp(m_casep);
+        pathFilterBeginp->addStmtsp(casep);
         // Create Loop to iterate over the different paths
         AstLoop* loopp = new AstLoop{m_targetModp->fileline(), nullptr};
         AstLtS* ltsp = new AstLtS{
@@ -1252,6 +1247,7 @@ class DPIOverrideBuilder final {
         AstAlways* alwaysp
             = new AstAlways{m_targetModp->fileline(), VAlwaysKwd::ALWAYS, senTreep, beginp};
         m_targetModp->addStmtsp(alwaysp);
+        return casep;
     }
     void insTaskHandler() {
         //TODO: Wie koennen Tasks genutzt werden? [5]
@@ -1285,11 +1281,9 @@ public:
         } else if (m_funcp) {
             insFuncHandler(hookedVarp, targetVarp);
         }
-        if (!hasTargetFilter()) {
-            insTargetFilter();
-            insCaseItem(targetVarp);
-        } else
-            insCaseItem(targetVarp);
+        AstCase* casep = findTargetFilter();
+        if (!casep) casep = insTargetFilter();
+        insCaseItem(targetVarp, casep);
         m_targetEntry.done = true;
     }
 };
@@ -1366,9 +1360,9 @@ public:
             // Insert hook logic for each entry
             for (auto& entry : target->entries) {
                 if (!existsEntry(target->origModp, entry.origVarp)) {
-                    DPIOverrideBuilder insDPIOverrideBuilder{target->origModp,    typeTablep,
-                                           target->dpiTriggerp, entry,
-                                           caseCache,           selResMap};
+                    DPIOverrideBuilder insDPIOverrideBuilder{target->origModp,
+                                           typeTablep, target->dpiTriggerp,
+                                           entry, caseCache, selResMap};
                     insDPIOverrideBuilder.insert();
                 }
             }

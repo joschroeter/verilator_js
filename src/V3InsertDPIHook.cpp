@@ -767,9 +767,14 @@ public:
 
 class DPIOverrideBuilder final {
     struct RhsReplaceEntry {
-        AstNodeExpr* rhsp;
-        AstVar* hookedVarp;
-        AstVar* selResp;
+        AstNodeExpr* rhsp = nullptr;  // Driving rhs expression (was the map key's second element)
+        SelResEntry entry;  // Selection-result payload (hookedVarp, selResp, drivingSelResp)
+    };
+    // Unified read view over both driver sources (m_selResMap + m_rhsReplaceEntries) so the
+    // insertion loops iterate a single sequence instead of duplicating logic per container.
+    struct DriverView {
+        SelResEntry* payloadp = nullptr;
+        AstNodeExpr* drivingExprp = nullptr;  // non-null only for rhs-expression drivers
     };
     // Members
     AstBasicDType* m_idDTypep = nullptr;
@@ -782,10 +787,20 @@ class DPIOverrideBuilder final {
     AstVar* m_selResp = nullptr;
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
-    std::map<std::pair<AstVar*, AstNodeExpr*>, SelResEntry> m_rhsReplaceEntries;
+    std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
     std::unordered_map<AstModule*, AstCase*>& m_caseCache;  // Provided by constructor
 
     // Methods
+    std::vector<DriverView> collectDrivers(AstVar* ownerVarp) {
+        std::vector<DriverView> drivers;
+        for (auto& [key, entry] : m_selResMap) {
+            if (key.first == ownerVarp) drivers.push_back(DriverView{&entry, nullptr});
+        }
+        for (auto& rhs : m_rhsReplaceEntries) {
+            drivers.push_back(DriverView{&rhs.entry, rhs.rhsp});
+        }
+        return drivers;
+    }
     AstAlways* createHandler(AstVar* hookedVarp, AstVar* targetVarp, AstVar* selResp,
                              AstNodeExpr* drivingRhsp) {
         AstFuncRef* funcRefp = nullptr;
@@ -1032,7 +1047,10 @@ class DPIOverrideBuilder final {
                       });
             }
             if (!foundRef && !hasSelResEntry && targetVarp->isOutputish()) {
-                m_rhsReplaceEntries[{targetVarp, rhsp}];
+                const bool exists = std::any_of(
+                    m_rhsReplaceEntries.begin(), m_rhsReplaceEntries.end(),
+                    [&](const RhsReplaceEntry& e) { return e.rhsp == rhsp; });
+                if (!exists) m_rhsReplaceEntries.push_back(RhsReplaceEntry{rhsp, {}});
             }
         }
     }
@@ -1071,10 +1089,7 @@ class DPIOverrideBuilder final {
                 editVarRefp();
                 //idx++;
             };
-            for (auto& [key, entry] : m_selResMap) {
-                if (key.first == targetVarp) { applyEntry(entry); }
-            }
-            for (auto& [key, entry] : m_rhsReplaceEntries) { applyEntry(entry); }
+            for (const DriverView& d : collectDrivers(targetVarp)) applyEntry(*d.payloadp);
             return;
         }
         m_targetModp->addStmtsp(m_selResp);
@@ -1118,21 +1133,19 @@ class DPIOverrideBuilder final {
         }
     }
     void insFuncHandler(AstVar* hookedVarp, AstVar* targetVarp) {
+        AstAlways* handlerp = nullptr;
         if (targetVarp->isOutputish()) {
-            for (auto& [key, entry] : m_selResMap) {
-                if (key.first == targetVarp) {
-                    m_targetModp->addStmtsp(createHandler(entry.hookedVarp, entry.drivingSelResp,
-                                                          entry.selResp, nullptr));
-                    return;
-                }
-            }
-            for (auto& [key, entry] : m_rhsReplaceEntries) {
-                m_targetModp->addStmtsp(
-                    createHandler(entry.hookedVarp, nullptr, entry.selResp, key.second));
-                return;
+            for (const DriverView& d : collectDrivers(targetVarp)) {
+                handlerp = createHandler(d.payloadp->hookedVarp,
+                                         d.drivingExprp ? nullptr : d.payloadp->drivingSelResp,
+                                         d.payloadp->selResp, d.drivingExprp);
+                break;
             }
         }
-        m_targetModp->addStmtsp(createHandler(hookedVarp, targetVarp, m_selResp, nullptr));
+        if (!handlerp) {
+            handlerp = createHandler(hookedVarp, targetVarp, m_selResp, nullptr);
+        }
+        m_targetModp->addStmtsp(handlerp);
     }
     void insHookedVarp(AstVar* hookedVarp, AstVar* targetVarp) {
         if (targetVarp->direction() != VDirection::NONE) {
@@ -1149,12 +1162,7 @@ class DPIOverrideBuilder final {
             m_targetModp->addStmtsp(clonep);
             dstHookedVarp = clonep;
         };
-        for (auto& [key, entry] : m_selResMap) {
-            if (key.first == targetVarp) addClone(entry.hookedVarp);
-        }
-        for (auto& [key, entry] : m_rhsReplaceEntries) {
-            addClone(entry.hookedVarp);
-        }
+        for (const DriverView& d : collectDrivers(targetVarp)) addClone(d.payloadp->hookedVarp);
     }
     AstCase* insTargetFilter() {
         AstVar* hookPathp = findPathVarp();

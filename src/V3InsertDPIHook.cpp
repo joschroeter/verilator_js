@@ -39,6 +39,99 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 static constexpr int DPIHOOK_MAX_TARGETS = 4;
 static constexpr int DPIHOOK_MAX_TARGETS_BITS = 2;  // ceil(log2(DPIHOOK_MAX_TARGETS))
 
+struct SelResEntry {
+    AstVar* drivingSelResp = nullptr;
+    AstVar* selResp = nullptr;
+    AstVar* hookedVarp = nullptr;
+};
+struct DTypeCache {
+    AstBasicDType* stringDTypep = nullptr;
+    AstBasicDType* intDTypep = nullptr;
+    AstUnpackArrayDType* partArraySelDTypep = nullptr;
+};
+
+//##################################################################################
+// Shared builder for the "path filter" always-block emitted by path router
+// (HookPathRouter::addPathFilter) and override builder (DPIOverrideBuilder::insTargetFilter).
+struct PathFilterConfig {
+    AstModule* modp = nullptr;  // Module receiving the always block (also source of fileline)
+    AstBasicDType* intDTypep = nullptr;  // Signed-int dtype for the loop index (pre-registered)
+    AstBasicDType* stringDTypep = nullptr;  // String dtype for the decoded part (pre-registered)
+    AstVar* hookPathp = nullptr;  // DPIHOOK_PATH input being decoded
+    string targetVarName;  // Name of the decoded-part variable
+    VLifetime targetVarLifetime;  // Lifetime of the decoded-part variable
+    bool targetVarHasUserInit = false;  // Whether to mark the decoded-part var hasUserInit
+    bool declTargetInLoopBody = false;  // Declare targetVar in the loop body (true) or the
+                                        // always body (false)
+    string alwaysName;  // Name given to the generated begin/always block
+    std::unordered_map<AstModule*, AstCase*>* caseCachep = nullptr;  // Cache to register case in
+};
+struct PathFilterResult {
+    AstCase* casep = nullptr;  // The (still item-less) case statement
+    AstVarRef* loopVarRefRp = nullptr;  // READ ref to the loop index, for case-item building
+    AstArraySel* partArraySelp = nullptr;  // Inner arraysel: hookPath[i]
+    AstArraySel* targetArraySelp = nullptr;  // Outer arraysel: hookPath[i][0]
+};
+static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
+    AstModule* const modp = cfg.modp;
+    FileLine* const fl = modp->fileline();
+    // Create the loop variable index
+    AstVar* loopVarp = new AstVar{fl, VVarType::VAR, "i", cfg.intDTypep};
+    loopVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
+    loopVarp->usedLoopIdx(true);
+    AstVarRef* loopVarRefRp = new AstVarRef{fl, loopVarp, VAccess::READ};
+    // Create target path variable for the case selection and assignment
+    AstVar* targetVarp = new AstVar{fl, VVarType::VAR, cfg.targetVarName, cfg.stringDTypep};
+    targetVarp->hasUserInit(cfg.targetVarHasUserInit);
+    targetVarp->lifetime(cfg.targetVarLifetime);
+    AstVarRef* targetVarRefWp = new AstVarRef{fl, targetVarp, VAccess::WRITE};
+    AstVarRef* targetVarRefRp = new AstVarRef{fl, targetVarp, VAccess::READ};
+    // Create Case (items are added by the caller)
+    AstCase* casep = new AstCase{fl, VCaseType::CT_CASE, targetVarRefRp, nullptr};
+    cfg.caseCachep->insert({modp, casep});
+    // Create Assign decoding hookPath[i][0] into the target path variable
+    AstSel* selp
+        = new AstSel{fl, loopVarRefRp->cloneTree(false), new AstConst{fl, 0}, DPIHOOK_MAX_TARGETS_BITS};
+    AstVarRef* hookPathRefp = new AstVarRef{fl, cfg.hookPathp, VAccess::READ};
+    AstArraySel* partArraySelp = new AstArraySel{fl, hookPathRefp, selp};
+    AstArraySel* targetArraySelp = new AstArraySel{fl, partArraySelp, new AstConst{fl, 0}};
+    AstAssign* caseAssignp = new AstAssign{fl, targetVarRefWp, targetArraySelp};
+    // Create the begin for the Case selection
+    AstBegin* pathFilterBeginp = new AstBegin{fl, "", nullptr, false};
+    if (cfg.declTargetInLoopBody) pathFilterBeginp->addDeclsp(targetVarp);
+    pathFilterBeginp->addStmtsp(caseAssignp);
+    pathFilterBeginp->addStmtsp(casep);
+    // Create Loop to iterate over the different paths
+    AstLoop* loopp = new AstLoop{fl, nullptr};
+    AstLtS* ltsp
+        = new AstLtS{fl, loopVarRefRp->cloneTree(false), new AstConst{fl, DPIHOOK_MAX_TARGETS}};
+    AstLoopTest* loopTestp = new AstLoopTest{fl, loopp, ltsp};
+    AstAdd* addp = new AstAdd{fl, loopVarRefRp->cloneTree(false), new AstConst{fl, 1}};
+    AstVarRef* loopVarRefWp = new AstVarRef{fl, loopVarp, VAccess::WRITE};
+    AstAssign* loopIdxIncp = new AstAssign{fl, loopVarRefWp, addp};
+    loopp->addStmtsp(loopTestp);
+    loopp->addStmtsp(pathFilterBeginp);
+    loopp->addStmtsp(loopIdxIncp);
+    // Create Assign for the loop variable (0 in beginning)
+    AstAssign* loopAssignp
+        = new AstAssign{fl, loopVarRefWp->cloneTree(false), new AstConst{fl, 0}};
+    // Create the loop
+    AstBegin* loopBeginp = new AstBegin{fl, "", nullptr, true};
+    loopBeginp->addDeclsp(loopVarp);
+    loopBeginp->addStmtsp(loopAssignp);
+    loopBeginp->addStmtsp(loopp);
+    // Create the always block
+    AstBegin* beginp = new AstBegin{fl, "", loopBeginp, false};
+    if (!cfg.declTargetInLoopBody) beginp->addDeclsp(targetVarp);
+    beginp->name(cfg.alwaysName);
+    AstVarRef* senItemRefp = new AstVarRef{fl, cfg.hookPathp, VAccess::READ};
+    AstSenItem* senItemp = new AstSenItem{fl, VEdgeType::ET_CHANGED, senItemRefp};
+    AstSenTree* senTreep = new AstSenTree{fl, senItemp};
+    AstAlways* alwaysp = new AstAlways{fl, VAlwaysKwd::ALWAYS, senTreep, beginp};
+    modp->addStmtsp(alwaysp);
+    return PathFilterResult{casep, loopVarRefRp, partArraySelp, targetArraySelp};
+}
+
 //##################################################################################
 // Collect nodes and data from the AST for hook-insertion
 class HookInsTargetFndrVisitor final : public VNVisitor {
@@ -604,75 +697,28 @@ class HookPathRouter final {
     }
     void addPathFilter(AstModule* modp, AstVar* hookPathp, int idx, std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
         AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
-        // Add filter logic providing path information to the modules/instances
-        // Create the loop variable index
+        // Add filter logic providing path information to the modules/instances.
+        // Ensure the shared signed-int dtype for the loop index exists
         if (!m_dtypeCache.intDTypep) {
             m_dtypeCache.intDTypep
                 = new AstBasicDType{modp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
             m_dtypeCache.intDTypep->generic(true);
             typeTablep->addTypesp(m_dtypeCache.intDTypep);
         }
-        AstVar* loopVarp
-            = new AstVar{modp->fileline(), VVarType::VAR, "i", m_dtypeCache.intDTypep};
-        loopVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
-        loopVarp->usedLoopIdx(true);
-        AstVarRef* loopVarRefRp = new AstVarRef{modp->fileline(), loopVarp, VAccess::READ};
-        // Create target path variable for the case selection and assignment
-        AstVar* targetVarp = new AstVar{modp->fileline(), VVarType::VAR, "DPITARGETPATH",
-                                        m_dtypeCache.stringDTypep};
-        targetVarp->hasUserInit();
-        targetVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-        AstVarRef* targetVarRefWp = new AstVarRef{modp->fileline(), targetVarp, VAccess::WRITE};
-        AstVarRef* targetVarRefRp = new AstVarRef{modp->fileline(), targetVarp, VAccess::READ};
-        // Create Case with Case items
-        AstCase* pathFilterCasep
-            = new AstCase{modp->fileline(), VCaseType::CT_CASE, targetVarRefRp, nullptr};
-        m_caseCache.insert({modp, pathFilterCasep});
-        insertCaseItems(modp, pathFilterCasep, hookPathp, loopVarRefRp, idx, instPathVarps);
-        // Create Assign for the target path
-        AstSel* selp = new AstSel{modp->fileline(), loopVarRefRp->cloneTree(false),
-                                  new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
-        AstVarRef* hookPathRefp = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
-        AstArraySel* partArraySelp = new AstArraySel{modp->fileline(), hookPathRefp, selp};
-        partArraySelp->dtypep(m_dtypeCache.partArraySelDTypep);
-        AstArraySel* targetArraySelp
-            = new AstArraySel{modp->fileline(), partArraySelp, new AstConst{modp->fileline(), 0}};
-        AstAssign* caseAssignp = new AstAssign{modp->fileline(), targetVarRefWp, targetArraySelp};
-        // Create the begin for the Case selection
-        AstBegin* pathFilterBeginp = new AstBegin{modp->fileline(), "", nullptr, false};
-        pathFilterBeginp->addStmtsp(caseAssignp);
-        pathFilterBeginp->addStmtsp(pathFilterCasep);
-        // Create Loop to iterate over the different paths
-        AstLoop* loopp = new AstLoop{modp->fileline(), nullptr};
-        AstLtS* ltsp = new AstLtS{
-            modp->fileline(), loopVarRefRp->cloneTree(false),
-            new AstConst{modp->fileline(), DPIHOOK_MAX_TARGETS}};
-        AstLoopTest* loopTestp = new AstLoopTest{modp->fileline(), loopp, ltsp};
-        AstAdd* addp = new AstAdd{modp->fileline(), loopVarRefRp->cloneTree(false),
-                                  new AstConst{modp->fileline(), 1}};
-        AstVarRef* loopVarRefWp = new AstVarRef{modp->fileline(), loopVarp, VAccess::WRITE};
-        AstAssign* loopIdxIncp = new AstAssign{modp->fileline(), loopVarRefWp, addp};
-        loopp->addStmtsp(loopTestp);
-        loopp->addStmtsp(pathFilterBeginp);
-        loopp->addStmtsp(loopIdxIncp);
-        // Create Assign for the loop variable (0 in beginning)
-        AstAssign* loopAssignp = new AstAssign{modp->fileline(), loopVarRefWp->cloneTree(false),
-                                               new AstConst{modp->fileline(), 0}};
-        // Create the loop
-        AstBegin* loopBeginp = new AstBegin{modp->fileline(), "", nullptr, true};
-        loopBeginp->addDeclsp(loopVarp);
-        loopBeginp->addStmtsp(loopAssignp);
-        loopBeginp->addStmtsp(loopp);
-        // Create the always block
-        AstBegin* beginp = new AstBegin{modp->fileline(), "", loopBeginp, false};
-        beginp->addDeclsp(targetVarp);
-        beginp->name("DPIHOOK_PATH_FILTER");
-        AstVarRef* senItemRefp = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
-        AstSenItem* senItemp
-            = new AstSenItem{modp->fileline(), VEdgeType::ET_CHANGED, senItemRefp};
-        AstSenTree* senTreep = new AstSenTree{modp->fileline(), senItemp};
-        AstAlways* alwaysp = new AstAlways{modp->fileline(), VAlwaysKwd::ALWAYS, senTreep, beginp};
-        modp->addStmtsp(alwaysp);
+        PathFilterConfig cfg;
+        cfg.modp = modp;
+        cfg.intDTypep = m_dtypeCache.intDTypep;
+        cfg.stringDTypep = m_dtypeCache.stringDTypep;
+        cfg.hookPathp = hookPathp;
+        cfg.targetVarName = "DPITARGETPATH";
+        cfg.targetVarLifetime = VLifetime::STATIC_IMPLICIT;
+        cfg.targetVarHasUserInit = false;  // preserves prior behavior (was a no-op getter call)
+        cfg.declTargetInLoopBody = false;  // declared in the always body
+        cfg.alwaysName = "DPIHOOK_PATH_FILTER";
+        cfg.caseCachep = &m_caseCache;
+        PathFilterResult res = buildPathFilter(cfg);
+        insertCaseItems(modp, res.casep, hookPathp, res.loopVarRefRp, idx, instPathVarps);
+        res.partArraySelp->dtypep(m_dtypeCache.partArraySelDTypep);
     }
     void addSelPin(AstCell* cellp, int idx,
                    const std::vector<AstVar*>& dpihookPathps,
@@ -1166,84 +1212,30 @@ class DPIOverrideBuilder final {
     }
     AstCase* insTargetFilter() {
         AstVar* hookPathp = findPathVarp();
-        // Add filter logic providing path information to the modules/instances
-        // Create the loop variable index
+        // Add filter logic providing path information to the modules/instances.
+        // Create the loop-index and decoded-part dtypes (fresh per target filter)
         AstBasicDType* loopVarTypep
             = new AstBasicDType{m_targetModp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
         loopVarTypep->generic(true);
         m_typeTablep->addTypesp(loopVarTypep);
-        AstVar* loopVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR, "i", loopVarTypep};
-        loopVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
-        loopVarp->usedLoopIdx(true);
-        AstVarRef* loopVarRefRp = new AstVarRef{m_targetModp->fileline(), loopVarp, VAccess::READ};
-        // Create target path variable for the case selection and assignment
         AstBasicDType* stringTypep
             = new AstBasicDType{m_targetModp->fileline(), VBasicDTypeKwd::STRING};
         stringTypep->generic(true);
         m_typeTablep->addTypesp(stringTypep);
-        AstVar* targetVarp
-            = new AstVar{m_targetModp->fileline(), VVarType::VAR, "DPITARGET", stringTypep};
-        targetVarp->hasUserInit(true);
-        targetVarp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
-        AstVarRef* targetVarRefWp
-            = new AstVarRef{m_targetModp->fileline(), targetVarp, VAccess::WRITE};
-        AstVarRef* targetVarRefRp
-            = new AstVarRef{m_targetModp->fileline(), targetVarp, VAccess::READ};
-        // Create Case with Case items
-        AstCase* casep
-            = new AstCase{m_targetModp->fileline(), VCaseType::CT_CASE, targetVarRefRp, nullptr};
-        m_caseCache.insert({m_targetModp, casep});
-        // Create Assign for the target path
-        AstSel* selp = new AstSel{m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
-                                  new AstConst{m_targetModp->fileline(), 0},
-                                  DPIHOOK_MAX_TARGETS_BITS};
-        AstVarRef* hookPathRefp
-            = new AstVarRef{m_targetModp->fileline(), hookPathp, VAccess::READ};
-        AstArraySel* pathArraySelp = new AstArraySel{m_targetModp->fileline(), hookPathRefp, selp};
-        AstArraySel* targetArraySelp = new AstArraySel{m_targetModp->fileline(), pathArraySelp,
-                                                       new AstConst{m_targetModp->fileline(), 0}};
-        targetArraySelp->dtypep(hookPathp->dtypep());
-        AstAssign* caseAssignp
-            = new AstAssign{m_targetModp->fileline(), targetVarRefWp, targetArraySelp};
-        // Create the begin for the Case selection
-        AstBegin* pathFilterBeginp = new AstBegin{m_targetModp->fileline(), "", nullptr, false};
-        pathFilterBeginp->addDeclsp(targetVarp);
-        pathFilterBeginp->addStmtsp(caseAssignp);
-        pathFilterBeginp->addStmtsp(casep);
-        // Create Loop to iterate over the different paths
-        AstLoop* loopp = new AstLoop{m_targetModp->fileline(), nullptr};
-        AstLtS* ltsp = new AstLtS{
-            m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
-            new AstConst{m_targetModp->fileline(), DPIHOOK_MAX_TARGETS}};
-        AstLoopTest* loopTestp = new AstLoopTest{m_targetModp->fileline(), loopp, ltsp};
-        AstAdd* addp = new AstAdd{m_targetModp->fileline(), loopVarRefRp->cloneTree(false),
-                                  new AstConst{m_targetModp->fileline(), 1}};
-        AstVarRef* loopVarRefWp
-            = new AstVarRef{m_targetModp->fileline(), loopVarp, VAccess::WRITE};
-        AstAssign* loopIdxIncp = new AstAssign{m_targetModp->fileline(), loopVarRefWp, addp};
-        loopp->addStmtsp(loopTestp);
-        loopp->addStmtsp(pathFilterBeginp);
-        loopp->addStmtsp(loopIdxIncp);
-        // Create Assign for the loop variable (0 in beginning)
-        AstAssign* loopAssignp
-            = new AstAssign{m_targetModp->fileline(), loopVarRefWp->cloneTree(false),
-                            new AstConst{m_targetModp->fileline(), 0}};
-        // Create the loop
-        AstBegin* loopBeginp = new AstBegin{m_targetModp->fileline(), "", nullptr, true};
-        loopBeginp->addDeclsp(loopVarp);
-        loopBeginp->addStmtsp(loopAssignp);
-        loopBeginp->addStmtsp(loopp);
-        // Create the always block
-        AstBegin* beginp = new AstBegin{m_targetModp->fileline(), "", loopBeginp, false};
-        beginp->name("DPIHOOK_TARGET_FILTER");
-        AstVarRef* senItemRefp = new AstVarRef{m_targetModp->fileline(), hookPathp, VAccess::READ};
-        AstSenItem* senItemp
-            = new AstSenItem{m_targetModp->fileline(), VEdgeType::ET_CHANGED, senItemRefp};
-        AstSenTree* senTreep = new AstSenTree{m_targetModp->fileline(), senItemp};
-        AstAlways* alwaysp
-            = new AstAlways{m_targetModp->fileline(), VAlwaysKwd::ALWAYS, senTreep, beginp};
-        m_targetModp->addStmtsp(alwaysp);
-        return casep;
+        PathFilterConfig cfg;
+        cfg.modp = m_targetModp;
+        cfg.intDTypep = loopVarTypep;
+        cfg.stringDTypep = stringTypep;
+        cfg.hookPathp = hookPathp;
+        cfg.targetVarName = "DPITARGET";
+        cfg.targetVarLifetime = VLifetime::AUTOMATIC_IMPLICIT;
+        cfg.targetVarHasUserInit = true;
+        cfg.declTargetInLoopBody = true;  // declared in the loop body
+        cfg.alwaysName = "DPIHOOK_TARGET_FILTER";
+        cfg.caseCachep = &m_caseCache;
+        PathFilterResult res = buildPathFilter(cfg);
+        res.targetArraySelp->dtypep(hookPathp->dtypep());
+        return res.casep;
     }
     void insTaskHandler() {
         //TODO: Wie koennen Tasks genutzt werden? [5]

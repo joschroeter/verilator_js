@@ -23,17 +23,6 @@
 class AstNetlist;
 
 //=========================================================================
-struct SelResEntry {
-    AstVar* drivingSelResp = nullptr;
-    AstVar* selResp = nullptr;
-    AstVar* hookedVarp = nullptr;
-};
-struct DTypeCache {
-    AstBasicDType* stringDTypep = nullptr;
-    AstBasicDType* intDTypep = nullptr;
-    AstUnpackArrayDType* partArraySelDTypep = nullptr;
-};
-
 class V3InsertDPIHook final {
 public:
     static void findTargets(AstNetlist* nodep) VL_MT_DISABLED;

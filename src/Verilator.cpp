@@ -227,8 +227,7 @@ static void process() {
         // Hook-insert design with the configurations given in .vlt file
         if (v3Global.insDPIHooks()) {
             v3Global.dpi(true);
-            V3InsertDPIHook::findTargets(v3Global.rootp());
-            V3InsertDPIHook::insertHooks(v3Global.rootp());
+            V3InsertDPIHook::hookInsert(v3Global.rootp());
         }
 
         // End of elaboration

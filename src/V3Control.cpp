@@ -801,7 +801,7 @@ class V3ControlResolver final {
     uint8_t m_mode = NONE;
     std::unordered_map<string, V3ControlResolverHierWorkerEntry> m_hierWorkers;
     FileLine* m_profileFileLine = nullptr;
-    std::map<std::string, HookInsertTarget> m_hookInsCfg;
+    std::map<std::string, std::vector<HookInsCfgEntry>> m_hookInsCfg;
 
     V3ControlResolver() = default;
     ~V3ControlResolver() = default;
@@ -908,35 +908,18 @@ public:
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         const auto varTarget = result.second;
-        // bitRangeLeft & bitRangeLeft uninitialized since no bit range or bit position is
+        // bitRangeLeft & bitRangeRight uninitialized since no bit range or bit position is
         // targeted
-        HookInsertEntry entry{std::nullopt, std::nullopt, callback, varTarget, {}, {}};
-        const auto it = m_hookInsCfg.find(prefix);
-        if (it != m_hookInsCfg.end()) {
-            it->second.entries.push_back(entry);
-        } else {
-            // Create a new entry in the map
-            HookInsertTarget newTarget;
-            newTarget.entries.push_back(entry);
-            m_hookInsCfg[prefix] = std::move(newTarget);
-        }
+        m_hookInsCfg[prefix].push_back(
+            HookInsCfgEntry{std::nullopt, std::nullopt, callback, varTarget});
     }
     void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
                        const uint32_t bitPos) {
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         const auto varTarget = result.second;
-        // bitRangeLeft unitialized since no bit range but a bit position is targeted
-        HookInsertEntry entry{std::nullopt, bitPos, callback, varTarget, {}, {}};
-        const auto it = m_hookInsCfg.find(prefix);
-        if (it != m_hookInsCfg.end()) {
-            it->second.entries.push_back(entry);
-        } else {
-            // Create a new entry in the map
-            HookInsertTarget newTarget;
-            newTarget.entries.push_back(entry);
-            m_hookInsCfg[prefix] = std::move(newTarget);
-        }
+        // bitRangeLeft uninitialized since no bit range but a bit position is targeted
+        m_hookInsCfg[prefix].push_back(HookInsCfgEntry{std::nullopt, bitPos, callback, varTarget});
     }
     void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
                        const string& bitRange) {
@@ -945,22 +928,14 @@ public:
         const auto varTarget = result.second;
         const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(bitRange);
         if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
-            HookInsertEntry entry{bitRangePos.first.value(), bitRangePos.second.value(), callback, varTarget, {}, {}};
-            const auto it = m_hookInsCfg.find(prefix);
-        if (it != m_hookInsCfg.end()) {
-            it->second.entries.push_back(entry);
-        } else {
-            // Create a new entry in the map
-            HookInsertTarget newTarget;
-            newTarget.entries.push_back(entry);
-            m_hookInsCfg[prefix] = std::move(newTarget);
-        }
+            m_hookInsCfg[prefix].push_back(HookInsCfgEntry{
+                bitRangePos.first.value(), bitRangePos.second.value(), callback, varTarget});
         } else {
             // If the bit range is invalid, we should not proceed with adding the entry
             return;
         }
     }
-    std::map<string, HookInsertTarget>& getHookInsCfg() { return m_hookInsCfg; }
+    std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg() { return m_hookInsCfg; }
 };
 
 //######################################################################
@@ -1204,7 +1179,7 @@ const V3Control::FsmRegisterWrapper* V3Control::getFsmRegisterWrapper(const stri
     V3ControlModule* const modp = V3ControlResolver::s().modules().resolve(module);
     return modp ? modp->fsmRegisterWrapperp() : nullptr;
 }
-std::map<string, HookInsertTarget>& V3Control::getHookInsCfg() {
+std::map<string, std::vector<HookInsCfgEntry>>& V3Control::getHookInsCfg() {
     return V3ControlResolver::s().getHookInsCfg();
 }
 uint64_t V3Control::getProfileData(const string& hierDpi) {

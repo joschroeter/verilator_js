@@ -30,6 +30,8 @@
 #include "V3File.h"
 
 #include <iostream>
+#include <map>
+#include <optional>
 #include <vector>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
@@ -48,6 +50,28 @@ struct DTypeCache {
     AstBasicDType* stringDTypep = nullptr;
     AstBasicDType* intDTypep = nullptr;
     AstUnpackArrayDType* partArraySelDTypep = nullptr;
+};
+
+struct HookInsertEntry final {
+    std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
+    std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
+    std::string callback;  // Name of the DPI callback function to insert
+    std::string varTarget;  // Target variable name within the module
+    AstVar* origVarp = nullptr;  // Original variable pointer
+    AstVar* dpiHookedVarp = nullptr;  // Cloned variable pointer from original with edits
+    std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
+    std::vector<AstVarRef*> varRefps;  // VarRef nodes which should be edited later on
+    bool found = false;  // Whether the target variable was found during data finder pass
+    bool done = false;  // Whether the hook insertion has been completed for a signal
+};
+struct HookInsertTarget final {
+    AstModule* origModp = nullptr;  // Original module pointer containing target var
+    AstVar* dpiTriggerp = nullptr;  // Trigger for the DPI function/task
+    bool error = false;  // Whether an error occurred during the finder visitor
+    bool processed = false;  // Whether the data finder pass has processed this target
+    std::vector<AstCell*> cellps;  // Cells that need to have hook inputs
+    std::vector<AstModule*> modps;  // Modules that need to have hook inputs
+    std::vector<HookInsertEntry> entries;  // All hook insertion entries for this target
 };
 
 //##################################################################################
@@ -1359,16 +1383,30 @@ public:
 };
 //##################################################################################
 // Hook-insertion class functions
-
-void V3InsertDPIHook::findTargets(AstNetlist* nodep) {
-    UINFO(2, __FUNCTION__ << ": " << endl);
-    { HookInsTargetFndrVisitor{nodep, V3Control::getHookInsCfg()}; }
-    V3Global::dumpCheckGlobalTree("hookInsertFinder", 0, dumpTreeEitherLevel() >= 3);
+static std::map<std::string, HookInsertTarget> buildWorkingCfg() {
+    std::map<std::string, HookInsertTarget> insCfg;
+    for (const auto& [target, cfgEntries] : V3Control::getHookInsCfg()) {
+        HookInsertTarget& targetp = insCfg[target];
+        for (const HookInsCfgEntry& cfgEntry : cfgEntries) {
+            HookInsertEntry entry;
+            entry.bitRangeLeft = cfgEntry.bitRangeLeft;
+            entry.bitRangeRight = cfgEntry.bitRangeRight;
+            entry.callback = cfgEntry.callback;
+            entry.varTarget = cfgEntry.varTarget;
+            targetp.entries.push_back(std::move(entry));
+        }
+    }
+    return insCfg;
 }
 
-void V3InsertDPIHook::insertHooks(AstNetlist* nodep) {
+void V3InsertDPIHook::hookInsert(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
-    DPIHookInserter inserter{nodep, V3Control::getHookInsCfg()};
+    std::map<std::string, HookInsertTarget> insCfg = buildWorkingCfg();
+    // Finder phase: resolve the AST pointers for each configured target.
+    { HookInsTargetFndrVisitor{nodep, insCfg}; }
+    V3Global::dumpCheckGlobalTree("hookInsertFinder", 0, dumpTreeEitherLevel() >= 3);
+    // Insertion phase: mutate the AST using the resolved pointers.
+    DPIHookInserter inserter{nodep, insCfg};
     inserter.insDPIHooks();
     V3Global::dumpCheckGlobalTree("hookInsertFunction", 0, dumpTreeEitherLevel() >= 3);
 }

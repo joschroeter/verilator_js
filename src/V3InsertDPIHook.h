@@ -25,8 +25,7 @@ class AstNetlist;
 //=========================================================================
 class V3InsertDPIHook final {
 public:
-    static void findTargets(AstNetlist* nodep) VL_MT_DISABLED;
-    static void insertHooks(AstNetlist* nodep) VL_MT_DISABLED;
+    static void hookInsert(AstNetlist* nodep) VL_MT_DISABLED;
 };
 
 #endif  // Guard

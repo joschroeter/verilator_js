@@ -516,6 +516,7 @@ class HookPathRouter final {
     DTypeCache& m_dtypeCache;
     HookInsertTarget& m_insTarget;
     std::unordered_map<AstModule*, AstCase*>& m_caseCache;
+    std::unordered_map<AstModule*, AstVar*>& m_loopVarCache;  // Shared path-filter loop indices
 
     // Methods
     AstLoop* finalizeLoopp(AstLoop* loopp, AstVar* dpiTriggerp) {
@@ -753,6 +754,7 @@ class HookPathRouter final {
         cfg.declTargetInLoopBody = false;  // declared in the always body
         cfg.alwaysName = "DPIHOOK_PATH_FILTER";
         cfg.caseCachep = &m_caseCache;
+        cfg.loopVarCachep = &m_loopVarCache;
         PathFilterResult res = buildPathFilter(cfg);
         insertCaseItems(modp, res.casep, hookPathp, res.loopVarRefRp, idx, instPathVarps);
         res.partArraySelp->dtypep(m_dtypeCache.partArraySelDTypep);
@@ -830,12 +832,14 @@ class HookPathRouter final {
 
 public:
     HookPathRouter(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
-                  DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache)
+                  DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache,
+                  std::unordered_map<AstModule*, AstVar*>& loopVarCache)
         : m_netlistp(nodep)
         , m_insTarget(insTarget)
         , m_cfgKey(cfgKey)
         , m_dtypeCache(dtypeCache)
-        , m_caseCache(caseCache) {}
+        , m_caseCache(caseCache)
+        , m_loopVarCache(loopVarCache) {}
 
     void insert() {
         std::vector<AstVar*> dpihookCaseIdps;
@@ -1389,7 +1393,8 @@ public:
                 return;
             }
             // PathModule anpassen
-            HookPathRouter insPathRouter{m_netlistp, *target, key, dtypeCache, caseCache};
+            HookPathRouter insPathRouter{m_netlistp, *target, key, dtypeCache, caseCache,
+                                         targetLoopVarCache};
             insPathRouter.insert();
             // Validate all entries before sorting
             for (auto& entry : target->entries) {

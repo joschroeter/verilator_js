@@ -9,13 +9,19 @@
 
 import vltest_bootstrap
 
-test.scenarios('simulator')
+test.scenarios('vlt')
 test.top_filename = "t/t_ins_dpi_hook.v"
 
 dpi_filename = "t/t_ins_dpi_hook_dpi.cpp"
 vlt_filename = "t/" + test.name + ".vlt"
 
-test.compile(v_flags2=["--trace --timing --exe --main", vlt_filename, dpi_filename])
+# insert_dpihook adds an override driver on the hooked nets, which is expected
+# to look like a second combinational driver / circular comb logic.
+test.compile(make_main=False,
+             v_flags2=[
+                 "--trace --timing --exe -Wno-MULTIDRIVEN -Wno-UNOPTFLAT", vlt_filename,
+                 dpi_filename, test.pli_filename
+             ])
 
 test.execute(expect_filename=test.golden_filename)
 

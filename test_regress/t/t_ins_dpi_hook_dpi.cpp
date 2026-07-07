@@ -10,20 +10,21 @@
 
 #include <svdpi.h>
 
-extern "C" int instrument_var(int id, int trigger, const svLogic* x) {
-    switch (id) {
+extern "C" int instrument_var(int insID, svBit trigger, const svLogicVecVal* out) {
+    const int x = out->aval & 0xff;
+    switch (insID) {
     case 0:
         if ((VL_TIME_Q() >= 10 && VL_TIME_Q() < 20) || VL_TIME_Q() >= 85) {
             return 0;
         } else {
-            return *x;
+            return x;
         }
     case 1:
         if ((VL_TIME_Q() < 3) || (VL_TIME_Q() >= 32 && VL_TIME_Q() < 69)) {
             return 1;
         } else {
-            return *x;
+            return x;
         }
-    default: return *x;
+    default: return x;
     }
 }

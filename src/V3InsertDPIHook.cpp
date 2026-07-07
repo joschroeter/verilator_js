@@ -89,6 +89,8 @@ struct PathFilterConfig {
                                         // always body (false)
     string alwaysName;  // Name given to the generated begin/always block
     std::unordered_map<AstModule*, AstCase*>* caseCachep = nullptr;  // Cache to register case in
+    std::unordered_map<AstModule*, AstVar*>* 
+        loopVarCachep = nullptr; // Cache to register loop index var in, keyed by module. 
 };
 struct PathFilterResult {
     AstCase* casep = nullptr;  // The (still item-less) case statement
@@ -103,6 +105,7 @@ static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
     AstVar* loopVarp = new AstVar{fl, VVarType::VAR, "i", cfg.intDTypep};
     loopVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
     loopVarp->usedLoopIdx(true);
+    if (cfg.loopVarCachep) (*cfg.loopVarCachep)[modp] = loopVarp;
     AstVarRef* loopVarRefRp = new AstVarRef{fl, loopVarp, VAccess::READ};
     // Create target path variable for the case selection and assignment
     AstVar* targetVarp = new AstVar{fl, VVarType::VAR, cfg.targetVarName, cfg.stringDTypep};
@@ -532,10 +535,20 @@ class HookPathRouter final {
         return loopp;
     }
     AstVar* addCaseId(AstModule* modp) {
-        AstVar* caseIdp = nullptr;
-        caseIdp = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_CASE_ID", VFlagLogicPacked{}, 32};
-        caseIdp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+        AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
+        AstBasicDType* elemDTypep
+            = new AstBasicDType{modp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
+        elemDTypep->generic(true);
+        typeTablep->addTypesp(elemDTypep);
+        AstUnpackArrayDType* arrDTypep = new AstUnpackArrayDType{
+            modp->fileline(), elemDTypep,
+            new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
+        typeTablep->addTypesp(arrDTypep);
+        AstVar* caseIdp
+            = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_CASE_ID", arrDTypep};
+        caseIdp->lifetime(VLifetime::STATIC_IMPLICIT);
         caseIdp->direction(VDirection::INPUT);
+        caseIdp->trace(false);
         modp->addStmtsp(caseIdp);
         return caseIdp;
     }
@@ -853,12 +866,15 @@ class DPIOverrideBuilder final {
     AstTask* m_taskp = nullptr;
     AstTypeTable* m_typeTablep;  // Provided by constructor
     AstVar* m_condVarp = nullptr;
+    AstVar* m_caseIdVarp = nullptr;  // Per-target case-id, read by the DPI callback (see insCaseIdVarp)
     AstVar* m_dpiTriggerp;  // Provided by constructor
     AstVar* m_selResp = nullptr;
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
     std::unordered_map<AstModule*, AstCase*>& m_caseCache;  // Provided by constructor
+    std::unordered_map<AstModule*, AstVar*>& 
+        m_targetLoopVarCache; // Loop index var of each module's DPIHOOK_TARGET_FILTER
 
     // Methods
     std::vector<DriverView> collectDrivers(AstVar* ownerVarp) {
@@ -954,8 +970,8 @@ class DPIOverrideBuilder final {
     }
     AstFuncRef* finalizeFuncRef(AstFuncRef* funcRefp, AstVar* targetVarp,
                                 AstNodeExpr* drivingRhsp) {
-        AstVar* caseIdp = getCaseIdp(m_targetModp);
-        AstVarRef* caseIdRefp = new AstVarRef{funcRefp->fileline(), caseIdp, VAccess::READ};
+        AstVarRef* caseIdRefp
+            = new AstVarRef{funcRefp->fileline(), m_caseIdVarp, VAccess::READ};
         //AstConst* constIDp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
         //                                  m_targetEntry.insID};
         //constIDp->dtypeChgSigned();
@@ -1133,8 +1149,20 @@ class DPIOverrideBuilder final {
             = new AstVarRef{m_targetModp->fileline(), m_condVarp, VAccess::WRITE};
         AstAssign* assignp = new AstAssign{m_targetModp->fileline(), condVarRefp,
                                            new AstConst{m_targetModp->fileline(), 1}};
+        AstVar* caseIdInputp = getCaseIdp(m_targetModp);
+        AstVar* loopVarp = m_targetLoopVarCache.at(m_targetModp);
+        AstArraySel* caseIdSelp = new AstArraySel{
+            m_targetModp->fileline(),
+            new AstVarRef{m_targetModp->fileline(), caseIdInputp, VAccess::READ},
+            new AstVarRef{m_targetModp->fileline(), loopVarp, VAccess::READ}};
+        AstVarRef* caseIdVarRefWp
+            = new AstVarRef{m_targetModp->fileline(), m_caseIdVarp, VAccess::WRITE};
+        AstAssign* caseIdAssignp
+            = new AstAssign{m_targetModp->fileline(), caseIdVarRefWp, caseIdSelp};
+        AstBegin* caseBodyp = new AstBegin{m_targetModp->fileline(), "", assignp, false};
+        caseBodyp->addStmtsp(caseIdAssignp);
         AstCaseItem* caseItemp
-            = new AstCaseItem{m_targetModp->fileline(), cvtPackStringp, assignp};
+            = new AstCaseItem{m_targetModp->fileline(), cvtPackStringp, caseBodyp};
         casep->addItemsp(caseItemp);
     }
     void insCondResVarp(AstVar* hookedVarp, AstVar* targetVarp) {
@@ -1175,6 +1203,17 @@ class DPIOverrideBuilder final {
         AstVarRef* selVarRefp
             = new AstVarRef{m_targetModp->fileline(), m_condVarp, VAccess::WRITE};
         m_targetModp->addStmtsp(m_condVarp);
+    }
+    void insCaseIdVarp(AstVar* targetVarp) {
+        AstBasicDType* idDTypep
+            = new AstBasicDType{m_targetModp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
+        idDTypep->generic(true);
+        m_typeTablep->addTypesp(idDTypep);
+        m_caseIdVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                                  targetVarp->name() + "_caseId", idDTypep};
+        m_caseIdVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_caseIdVarp->trace(false);
+        m_targetModp->addStmtsp(m_caseIdVarp);
     }
     void insDPITaskOrFunction() {
         if (!hasFuncOrTask()) {
@@ -1257,6 +1296,7 @@ class DPIOverrideBuilder final {
         cfg.declTargetInLoopBody = true;  // declared in the loop body
         cfg.alwaysName = "DPIHOOK_TARGET_FILTER";
         cfg.caseCachep = &m_caseCache;
+        cfg.loopVarCachep = &m_targetLoopVarCache;
         PathFilterResult res = buildPathFilter(cfg);
         res.targetArraySelp->dtypep(hookPathp->dtypep());
         return res.casep;
@@ -1268,13 +1308,15 @@ class DPIOverrideBuilder final {
 public:
     DPIOverrideBuilder(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
               HookInsertEntry& targetEntry, std::unordered_map<AstModule*, AstCase*>& caseCache,
-              std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap)
+              std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap,
+              std::unordered_map<AstModule*, AstVar*>& targetLoopVarCache)
         : m_targetModp(targetModule)
         , m_typeTablep(typeTablep)
         , m_dpiTriggerp(dpiTriggerp)
         , m_targetEntry(targetEntry)
         , m_caseCache(caseCache)
-        , m_selResMap(selResMap) {}
+        , m_selResMap(selResMap)
+        , m_targetLoopVarCache(targetLoopVarCache) {}
     void insert() {
         VL_RESTORER(m_selResp);
         AstVar* hookedVarp = m_targetEntry.dpiHookedVarp;
@@ -1285,6 +1327,7 @@ public:
         gatherOutputData(targetVarp);
         // Insert hooked vars and selection logic
         insCondVarp(targetVarp);
+        insCaseIdVarp(targetVarp);
         insHookedVarp(hookedVarp, targetVarp);
         insCondResVarp(hookedVarp, targetVarp);
         // Insert Task/Func handler
@@ -1325,6 +1368,7 @@ public:
         AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         DTypeCache dtypeCache;
         std::unordered_map<AstModule*, AstCase*> caseCache;
+        std::unordered_map<AstModule*, AstVar*> targetLoopVarCache;
         // Map in Vector kopieren
         std::vector<std::pair<std::string, HookInsertTarget*>> sortedCfg;
         for (auto& [key, target] : m_insCfg) { sortedCfg.emplace_back(key, &target); }
@@ -1374,7 +1418,7 @@ public:
                 if (!existsEntry(target->origModp, entry.origVarp)) {
                     DPIOverrideBuilder insDPIOverrideBuilder{target->origModp,
                                            typeTablep, target->dpiTriggerp,
-                                           entry, caseCache, selResMap};
+                                           entry, caseCache, selResMap, targetLoopVarCache};
                     insDPIOverrideBuilder.insert();
                 }
             }

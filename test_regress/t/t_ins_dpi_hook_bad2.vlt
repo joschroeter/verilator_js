@@ -6,12 +6,12 @@
 
 `verilator_config
 
-insert_dpihook -callback "instrument_var" -id 0 -var "top.a1.b1.out"
+insert_dpihook -callback "instrument_var" -var "top.a1.b1.out"
 
-insert_dpihook -callback "instrument_var" -id 0 -var "top_module.a3.b1.out"
+insert_dpihook -callback "instrument_var" -var "top_module.a3.b1.out"
 
-insert_dpihook -callback "instrument_var" -id 0 -var "top_module.a1.b3.out"
+insert_dpihook -callback "instrument_var" -var "top_module.a1.b3.out"
 
-insert_dpihook -callback "instrument_var" -id 0 -var "top_module.a1.b1.clk"
+insert_dpihook -callback "instrument_var" -var "top_module.a1.b1.clk"
 
-insert_dpihook -callback "instrument_var" -id 0 -var "top_module.a1.b1.bigRegister"
+insert_dpihook -callback "instrument_var" -var "top_module.a1.b1.bigRegister"

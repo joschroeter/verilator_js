@@ -387,16 +387,14 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             for (const auto& entry : target.entries) {
                 // Go over all var targets if in same module
                 if (nodep->name() == entry.varTarget) {
-                    int width = 0;
                     // Check for if target var is supported
                     AstBasicDType* basicp = nodep->basicp();
                     const bool literal = basicp->isLiteralType();
                     const bool implicit = basicp->implicit();
-                    if (!implicit && nodep->basicp()->rangep()) {
-                        // Since the basicp is not implicit and there is a rangep, we can use the
-                        // rangep for deducting the width
-                        width = nodep->basicp()->rangep()->elementsConst();
-                    }
+                    // Total bit width of the target. basicp()->rangep() is null for some packed
+                    // vectors (e.g. reg [127:0]), which used to leave width at 0 and silently let
+                    // >64-bit targets through; use the resolved var width instead.
+                    const int width = nodep->width();
                     const bool isUnsupportedType = !literal && !implicit;
                     const bool isUnsupportedWidth = literal && width > 64;
                     if (isUnsupportedType || isUnsupportedWidth) {
@@ -1401,7 +1399,7 @@ public:
                 if (!entry.found) {
                     m_netlistp->fileline()->v3error(
                         "Incomplete hook-insertion configuration for target '"
-                        << key << "." << entry.origVarp
+                        << key << "." << entry.varTarget
                         << "'. Please check previous Errors from V3Instrument:findTargets and "
                            "ensure"
                         << " all necessary components are defined correctly.");

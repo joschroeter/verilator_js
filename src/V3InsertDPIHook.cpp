@@ -1095,8 +1095,14 @@ class DPIOverrideBuilder final {
                         AstVar* selVar = targetVarp->isOutputish() ? selRespI : m_selResp;
                         AstVarRef* selResRefp
                             = new AstVarRef{assignp->fileline(), selVar, VAccess::READ};
-                        auto it = m_selResMap.find({lhsp->varp(), varRefp->varp()});
-                        if (it != m_selResMap.end()) { it->second.drivingSelResp = selVar; }
+                        // lhsp is null when the LHS is not a plain VarRef (e.g.
+                        // `assign arr[0] = target;`). Such a driver has no
+                        // m_selResMap entry to update, but the RHS varref must
+                        // still be redirected to the selRes variable below.
+                        if (lhsp) {
+                            auto it = m_selResMap.find({lhsp->varp(), varRefp->varp()});
+                            if (it != m_selResMap.end()) { it->second.drivingSelResp = selVar; }
+                        }
                         varRefp->replaceWith(selResRefp);
                     }
                 }
@@ -1124,7 +1130,7 @@ class DPIOverrideBuilder final {
             if (AstVarRef* varRefp = VN_CAST(rhsp, VarRef)) {
                 if (varRefp->varp() == targetVarp) {
                     foundRef = true;
-                    if (lhsp->varp()->isOutputish()) {
+                    if (lhsp && lhsp->varp()->isOutputish()) {
                         m_selResMap[{lhsp->varp(), varRefp->varp()}];
                     }
                 }

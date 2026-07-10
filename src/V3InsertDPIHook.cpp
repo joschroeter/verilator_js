@@ -410,12 +410,6 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                     varp->trace(true);
                     setVar(nodep, varp, m_target);
                     m_foundVarp = true;
-                } else if (!nodep->nextp() && !entry.found) {
-                    nodep->fileline()->v3error("DPI-hook insertion of target '"
-                                               << m_target + "." + entry.varTarget
-                                               << "' could not find 'var' in "
-                                                  "'__.var'");
-                    return;
                 }
             }
         }

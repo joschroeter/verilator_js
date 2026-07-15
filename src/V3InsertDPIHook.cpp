@@ -1180,16 +1180,20 @@ class DPIOverrideBuilder final {
                 createAssignp(targetVarp);
                 return;
             }
+            AstVar* firstSelResp = nullptr;
             auto applyEntry = [&](SelResEntry& entry) {
                 AstVar* selRespI = m_selResp->cloneTree(false);
                 selRespI->name(m_selResp->name() + "I" + std::to_string(idx));
                 m_targetModp->addStmtsp(selRespI);
+                if (!firstSelResp) firstSelResp = selRespI;
                 entry.selResp = selRespI;
                 editAssignp(targetVarp, selRespI);
-                editVarRefp();
-                //idx++;
+                idx++;
             };
             for (const DriverView& d : collectDrivers(targetVarp)) applyEntry(*d.payloadp);
+            if (firstSelResp) {
+                for (AstVarRef* vrp : m_targetEntry.varRefps) vrp->varp(firstSelResp);
+            }
             return;
         }
         m_targetModp->addStmtsp(m_selResp);

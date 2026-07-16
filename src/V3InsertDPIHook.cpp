@@ -407,6 +407,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                     varp->name("dpiHooked_" + nodep->name());
                     varp->origName("dpiHooked_" + nodep->name());
                     varp->isDPIHookInserted(true);
+                    varp->varType(VVarType::VAR);
                     varp->trace(true);
                     setVar(nodep, varp, m_target);
                     m_foundVarp = true;
@@ -885,30 +886,42 @@ class DPIOverrideBuilder final {
     }
     AstAlways* createHandler(AstVar* hookedVarp, AstVar* targetVarp, AstVar* selResp,
                              AstNodeExpr* drivingRhsp) {
-        AstFuncRef* funcRefp = nullptr;
+        FileLine* const fl = m_targetModp->fileline();
         AstNodeExpr* drivingVarRefp = nullptr;
-        funcRefp = new AstFuncRef{m_targetModp->fileline(), m_funcp, nullptr};
-        funcRefp = finalizeFuncRef(funcRefp, targetVarp, drivingRhsp);
-        AstAssignW* assignwp = new AstAssignW{
-            m_targetModp->fileline(),
-            new AstVarRef{m_targetModp->fileline(), hookedVarp, VAccess::WRITE}, funcRefp};
-        AstAlways* alwaysp
-            = new AstAlways{m_targetModp->fileline(), VAlwaysKwd::CONT_ASSIGN, nullptr, assignwp};
-        m_targetModp->addStmtsp(alwaysp);
 
-        AstVarRef* dpiHookedVarRefp
-            = new AstVarRef{m_targetModp->fileline(), hookedVarp, VAccess::READ};
-        AstVarRef* selVarRefp = new AstVarRef{m_targetModp->fileline(), m_condVarp, VAccess::READ};
-        if (targetVarp) {
-            drivingVarRefp = new AstVarRef{m_targetModp->fileline(), targetVarp, VAccess::READ};
+        // DPI fault-function call for this hook.
+        AstFuncRef* funcRefp = new AstFuncRef{fl, m_funcp, nullptr};
+        funcRefp = finalizeFuncRef(funcRefp, targetVarp, drivingRhsp);
+
+        // The unperturbed (passthrough) value of the driven signal.
+        AstNodeExpr* origThenp = nullptr;
+        if (drivingRhsp) {
+            origThenp = drivingRhsp->cloneTree(false);
+        } else if (targetVarp) {
+            origThenp = new AstVarRef{fl, targetVarp, VAccess::READ};
         }
+
+        // Gate the DPI call on the hook's bind flag (m_condVarp): only evaluate
+        // the fault function when this hook has actually been bound to a target
+        // at runtime.
+        AstAssign* thenp
+            = new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, funcRefp};
+        AstNode* elsep
+            = origThenp
+                  ? new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, origThenp}
+                  : nullptr;
+        AstIf* ifp = new AstIf{fl, new AstVarRef{fl, m_condVarp, VAccess::READ}, thenp, elsep};
+        AstAlways* dpiAlwaysp = new AstAlways{fl, VAlwaysKwd::ALWAYS_COMB, nullptr, ifp};
+        m_targetModp->addStmtsp(dpiAlwaysp);
+
+        AstVarRef* dpiHookedVarRefp = new AstVarRef{fl, hookedVarp, VAccess::READ};
+        AstVarRef* selVarRefp = new AstVarRef{fl, m_condVarp, VAccess::READ};
+        if (targetVarp) { drivingVarRefp = new AstVarRef{fl, targetVarp, VAccess::READ}; }
         if (drivingRhsp) { drivingVarRefp = drivingRhsp->cloneTree(false); }
-        AstCond* condp
-            = new AstCond{m_targetModp->fileline(), selVarRefp, dpiHookedVarRefp, drivingVarRefp};
-        AstVarRef* selResRefp = new AstVarRef{m_targetModp->fileline(), selResp, VAccess::WRITE};
-        assignwp = new AstAssignW{m_targetModp->fileline(), selResRefp, condp};
-        alwaysp
-            = new AstAlways{m_targetModp->fileline(), VAlwaysKwd::CONT_ASSIGN, nullptr, assignwp};
+        AstCond* condp = new AstCond{fl, selVarRefp, dpiHookedVarRefp, drivingVarRefp};
+        AstVarRef* selResRefp = new AstVarRef{fl, selResp, VAccess::WRITE};
+        AstAssignW* assignwp = new AstAssignW{fl, selResRefp, condp};
+        AstAlways* alwaysp = new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignwp};
         return alwaysp;
     }
     AstFunc* finalizeFunc(AstFunc* funcp, AstVar* drivingVarp) {

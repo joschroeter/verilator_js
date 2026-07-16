@@ -520,10 +520,16 @@ class HookPathRouter final {
         AstLogNot* logNotp = new AstLogNot{loopp->fileline(), initParseRefrhsp};
         AstAssign* assignp = new AstAssign{loopp->fileline(), initParseReflhsp, logNotp};
         AstBegin* initialBeginp = new AstBegin{loopp->fileline(), "", assignp, false};
-        AstConst* timeStepp = new AstConst{loopp->fileline(), AstConst::WidthedValue{}, 64, 1};
+        // The trigger re-evaluates time-based faults every `step` time units.
+        // `step` is the fault-site evaluation granularity, a performance/temporal-
+        // fidelity knob (--dpihook-trigger-step, default 1): a fine step models
+        // sub-cycle/transient faults, a coarse step (e.g. the clock period) recovers
+        // near-baseline throughput for cycle-accurate injection. Only consumed here,
+        // so it has no effect unless a hook is actually inserted.
+        const uint32_t step = static_cast<uint32_t>(v3Global.opt.dpihookTriggerStep());
+        AstConst* timeStepp = new AstConst{loopp->fileline(), AstConst::WidthedValue{}, 64, step};
         AstDelay* delayp = new AstDelay{loopp->fileline(), timeStepp, false};
-        delayp->timeunit(m_netlistp->timeunit());  //TODO: Macht es Sinn hier die zeitsteps zu
-                                                   //etwas bestimmten zu forcen? [5]
+        delayp->timeunit(m_netlistp->timeunit());
         initialBeginp->addStmtsp(delayp);
         loopp->addStmtsp(initialBeginp);
         return loopp;

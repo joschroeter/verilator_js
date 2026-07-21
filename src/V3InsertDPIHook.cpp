@@ -160,6 +160,34 @@ static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
 }
 
 //##################################################################################
+// Report whether a variable is used as a clock (or an asynchronous reset)
+
+class ClockUseVisitor final : public VNVisitorConst {
+    const AstVar* const m_targetp;  // Variable being checked
+    bool m_inClockedSens = false;  // Currently inside an edge-sensitive sen item
+    bool m_isClock = false;  // Target found in such a sen item
+
+    void visit(AstSenItem* nodep) override {
+        VL_RESTORER(m_inClockedSens);
+        m_inClockedSens = nodep->isClocked() && nodep->sensp();
+        iterateChildrenConst(nodep);
+    }
+    void visit(AstVarRef* nodep) override {
+        if (m_inClockedSens && nodep->varp() == m_targetp) m_isClock = true;
+        iterateChildrenConst(nodep);
+    }
+    void visit(AstNode* nodep) override { iterateChildrenConst(nodep); }
+
+public:
+    ClockUseVisitor(AstNetlist* netlistp, const AstVar* targetp)
+        : m_targetp{targetp} {
+        iterateConst(netlistp);
+    }
+    ~ClockUseVisitor() override = default;
+    bool isClock() const { return m_isClock; }
+};
+
+//##################################################################################
 // Collect nodes and data from the AST for hook-insertion
 class HookInsTargetFndrVisitor final : public VNVisitor {
     AstNetlist*
@@ -409,6 +437,18 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                         nodep->fileline()->v3error("Target variable '"
                                                    << nodep->name() << "' in '" << m_currHier
                                                    << "' must be a supported type");
+                        return;
+                    }
+                    // Overriding a net the design clocks off breaks the clock
+                    // domains derived from it later; reject it here with a clear
+                    // message rather than failing deep in V3Scope.
+                    if (ClockUseVisitor{v3Global.rootp(), nodep}.isClock()) {
+                        nodep->fileline()->v3error(
+                            "Target variable '"
+                            << nodep->name() << "' in '" << m_currHier
+                            << "' is used as a clock or asynchronous reset (it appears in an"
+                               " edge-sensitive sensitivity list); hooking such a signal is not"
+                               " supported");
                         return;
                     }
                     AstVar* varp = nodep->cloneTree(false);

@@ -1242,7 +1242,8 @@ class DPIOverrideBuilder final {
         m_selResp->isDPIHookInserted(true);
         if (targetVarp->isOutputish()) {
             int idx = 0;
-            if (m_selResMap.empty() && m_rhsReplaceEntries.empty()) {
+            std::vector<DriverView> drivers = collectDrivers(targetVarp);
+            if (drivers.empty()) {
                 m_targetModp->addStmtsp(m_selResp);
                 createAssignp(targetVarp);
                 return;
@@ -1333,7 +1334,7 @@ class DPIOverrideBuilder final {
         if (targetVarp->direction() != VDirection::NONE) {
             hookedVarp->direction(VDirection::NONE);
         }
-        if (!targetVarp->isOutputish() || (m_selResMap.empty() && m_rhsReplaceEntries.empty())) {
+        if (!targetVarp->isOutputish() || collectDrivers(targetVarp).empty()) {
             m_targetModp->addStmtsp(hookedVarp);
             return;
         }

@@ -196,7 +196,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     }
     // Check if the given current Hierarchy matches the top module of the target (Pos: 0)
     bool targetHasTop(const string& target) {
-        return v3Global.rootp()->topModulep()->name() == VString::split(target, '.')[0];
+        const auto parts = VString::split(target, '.');
+        return !parts.empty() && v3Global.rootp()->topModulep()->name() == parts.front();
     }
     // In the target string a part is considered the module/instance name seperated by a dot from
     // the next one returns the amount of these parts to get a range for the selector input
@@ -220,6 +221,13 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
         tokens.push_back(str.substr(pos));
         return tokens;
+    }
+    // Config entry for the hierarchy currently being visited. Whenever m_targetModp
+    // is set this is expected to hit, but look it up defensively: on a miss the
+    // caller would otherwise dereference map::end().
+    const HookInsertTarget* currTargetp() {
+        const auto it = m_insCfg.find(m_currHier);
+        return it == m_insCfg.end() ? nullptr : &it->second;
     }
     void iterateAssigns(AstNodeAssign* assignp, const string& target, const string& varName,
                         bool isOutput) {
@@ -382,8 +390,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
     void visit(AstVar* nodep) override {
-        if (m_targetModp) {
-            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
+        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
+            const HookInsertTarget& target = *targetp;
             for (const auto& entry : target.entries) {
                 // Go over all var targets if in same module
                 if (nodep->name() == entry.varTarget) {
@@ -417,9 +425,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     };
     // Collect assigns if needed
     void visit(AstAssignW* nodep) override {
-        if (m_targetModp) {
-            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
-            for (const auto& entry : target.entries) {
+        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
+            for (const auto& entry : targetp->entries) {
                 if (entry.origVarp)
                     iterateAssigns(nodep, m_target, entry.varTarget,
                                    entry.origVarp->isOutputish());
@@ -427,9 +434,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
     }  // Collect assigns if needed
     void visit(AstAssign* nodep) override {
-        if (m_targetModp) {
-            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
-            for (const auto& entry : target.entries) {
+        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
+            for (const auto& entry : targetp->entries) {
                 if (entry.origVarp)
                     iterateAssigns(nodep, m_target, entry.varTarget,
                                    entry.origVarp->isOutputish());
@@ -437,9 +443,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
     }  // Collect assigns if needed
     void visit(AstAssignDly* nodep) override {
-        if (m_targetModp) {
-            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
-            for (const auto& entry : target.entries) {
+        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
+            for (const auto& entry : targetp->entries) {
                 if (entry.origVarp)
                     iterateAssigns(nodep, m_target, entry.varTarget,
                                    entry.origVarp->isOutputish());
@@ -447,9 +452,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
     }  // Collect assigns if needed
     void visit(AstAssignForce* nodep) override {
-        if (m_targetModp) {
-            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
-            for (const auto& entry : target.entries) {
+        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
+            for (const auto& entry : targetp->entries) {
                 if (entry.origVarp)
                     iterateAssigns(nodep, m_target, entry.varTarget,
                                    entry.origVarp->isOutputish());
@@ -457,9 +461,10 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
     }  // Collect VarRefs if needed
     void visit(AstVarRef* nodep) override {
-        if (m_targetModp && !m_assignNode) {
-            const HookInsertTarget& target = m_insCfg.find(m_currHier)->second;
-            for (const auto& entry : target.entries) {
+        const HookInsertTarget* const targetp
+            = (m_targetModp && !m_assignNode) ? currTargetp() : nullptr;
+        if (targetp) {
+            for (const auto& entry : targetp->entries) {
                 if (nodep->varp()->name() == entry.varTarget && nodep->access() == VAccess::READ) {
                     setVarRefs(nodep, m_target, entry.varTarget);
                 }
@@ -1171,7 +1176,10 @@ class DPIOverrideBuilder final {
         AstAssign* assignp = new AstAssign{m_targetModp->fileline(), condVarRefp,
                                            new AstConst{m_targetModp->fileline(), 1}};
         AstVar* caseIdInputp = getCaseIdp(m_targetModp);
-        AstVar* loopVarp = m_targetLoopVarCache.at(m_targetModp);
+        const auto loopIt = m_targetLoopVarCache.find(m_targetModp);
+        UASSERT_OBJ(loopIt != m_targetLoopVarCache.end(), m_targetModp,
+                    "DPI-hook: target filter loop variable missing for module");
+        AstVar* loopVarp = loopIt->second;
         AstArraySel* caseIdSelp = new AstArraySel{
             m_targetModp->fileline(),
             new AstVarRef{m_targetModp->fileline(), caseIdInputp, VAccess::READ},

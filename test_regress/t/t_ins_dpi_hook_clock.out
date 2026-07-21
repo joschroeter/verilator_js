@@ -1,0 +1,7 @@
+%Error: t/t_ins_dpi_hook_clock.v:29:15: Target variable 'clk' in 'top_module.a1' is used as a clock or asynchronous reset (it appears in an edge-sensitive sensitivity list); hooking such a signal is not supported
+   29 |   input logic clk,
+      |               ^~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: DPI-hook insertion of target 'top_module.a1' could not find 'var' in '__.instance.var'
+%Error: Incomplete hook-insertion configuration for target 'top_module.a1.clk'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Exiting due to

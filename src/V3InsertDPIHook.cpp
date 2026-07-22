@@ -261,12 +261,16 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                         bool isOutput) {
         m_assignNode = true;
         AstNodeExpr* exprp = isOutput ? assignp->lhsp() : assignp->rhsp();
+        // Match module-level signals only; a funcLocal of the same name (e.g. a
+        // package/function formal) is a different var and must not be collected.
         if (AstVarRef* varrefp = VN_CAST(exprp, VarRef)) {
-            if (varrefp->varp()->name() == varName) { setAssigns(assignp, target, varName); }
+            if (varrefp->varp()->name() == varName && !varrefp->varp()->isFuncLocal()) {
+                setAssigns(assignp, target, varName);
+            }
         } else {
             for (AstVarRef* level1p = VN_CAST(exprp->op1p(), VarRef); level1p;
                  level1p = VN_CAST(level1p->nextp(), VarRef)) {
-                if (level1p->varp()->name() == varName) {
+                if (level1p->varp()->name() == varName && !level1p->varp()->isFuncLocal()) {
                     setAssigns(assignp, target, varName);
                 }
             }
@@ -418,6 +422,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
     void visit(AstVar* nodep) override {
+        if (nodep->isFuncLocal()) return;
         if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
             const HookInsertTarget& target = *targetp;
             for (const auto& entry : target.entries) {
@@ -503,7 +508,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     void visit(AstVarRef* nodep) override {
         const HookInsertTarget* const targetp
             = (m_targetModp && !m_assignNode) ? currTargetp() : nullptr;
-        if (targetp) {
+        if (targetp && !nodep->varp()->isFuncLocal()) {
             for (const auto& entry : targetp->entries) {
                 if (nodep->varp()->name() == entry.varTarget && nodep->access() == VAccess::READ) {
                     setVarRefs(nodep, m_target, entry.varTarget);

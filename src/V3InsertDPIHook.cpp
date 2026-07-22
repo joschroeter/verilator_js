@@ -1495,6 +1495,44 @@ public:
             std::map<std::pair<AstVar*, AstVar*>, SelResEntry> selResMap;
             // Insert hook logic for each entry
             for (auto& entry : target->entries) {
+                AstVar* const ov = entry.origVarp;
+                // Reject target shapes the DPI fault site cannot yet carry
+                // (i) Array-shaped target: the site routes one packed value through a
+                // single DPI call, so an array of elements has no single value to
+                // route. Catch both a genuine unpacked array and a one-element array
+                // Verilator has already collapsed to a scalar but still reads through
+                // an array select (idx access). Left in, it fails later in V3Unknown
+                // ("Select from non-array").
+                const bool isArrayDType = VN_IS(ov->dtypep()->skipRefp(), UnpackArrayDType);
+                const bool readViaArraySel
+                    = std::any_of(entry.varRefps.begin(), entry.varRefps.end(),
+                                  [](AstVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
+                if (isArrayDType || readViaArraySel) {
+                    ov->v3warn(E_UNSUPPORTED,
+                               "DPI-hook target '"
+                                   << key << "." << entry.varTarget
+                                   << "' is an unpacked array or is accessed element-wise;"
+                                      " hooking array-shaped targets is not supported.");
+                    continue;
+                }
+                // (ii) Output assembled by partial (bit-select) assignments, e.g. a
+                // vector driven bit by bit in a generate loop. The override
+                // multiplexer replaces a whole-signal driver, which does not fit a
+                // per-bit assignment and mismatches widths later in V3DfgSynthesize.
+                if (ov->isOutputish()) {
+                    const bool partialDriver = std::any_of(
+                        entry.assignps.begin(), entry.assignps.end(),
+                        [](AstNodeAssign* ap) { return !VN_IS(ap->lhsp(), VarRef); });
+                    if (partialDriver) {
+                        ov->v3warn(E_UNSUPPORTED,
+                                   "DPI-hook target '"
+                                       << key << "." << entry.varTarget
+                                       << "' is an output driven by partial (bit-select)"
+                                          " assignments; hooking such signals is not yet"
+                                          " supported.");
+                        continue;
+                    }
+                }
                 if (!existsEntry(target->origModp, entry.origVarp)) {
                     DPIOverrideBuilder insDPIOverrideBuilder{target->origModp,
                                            typeTablep, target->dpiTriggerp,

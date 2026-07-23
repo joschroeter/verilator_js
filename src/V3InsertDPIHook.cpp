@@ -922,6 +922,7 @@ class DPIOverrideBuilder final {
     AstVar* m_caseIdVarp = nullptr;  // Per-target case-id, read by the DPI callback (see insCaseIdVarp)
     AstVar* m_dpiTriggerp;  // Provided by constructor
     AstVar* m_selResp = nullptr;
+    AstVar* m_preVarp = nullptr; // Intermediate the partial drivers write to
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
@@ -945,16 +946,19 @@ class DPIOverrideBuilder final {
         FileLine* const fl = m_targetModp->fileline();
         AstNodeExpr* drivingVarRefp = nullptr;
 
+        // Not targetVarp: this hook drives it, so reading it back would form a loop
+        AstVar* const sourceValuep = m_preVarp ? m_preVarp : targetVarp;
+
         // DPI fault-function call for this hook.
         AstFuncRef* funcRefp = new AstFuncRef{fl, m_funcp, nullptr};
-        funcRefp = finalizeFuncRef(funcRefp, targetVarp, drivingRhsp);
+        funcRefp = finalizeFuncRef(funcRefp, sourceValuep, drivingRhsp);
 
         // The unperturbed (passthrough) value of the driven signal.
         AstNodeExpr* origThenp = nullptr;
         if (drivingRhsp) {
             origThenp = drivingRhsp->cloneTree(false);
-        } else if (targetVarp) {
-            origThenp = new AstVarRef{fl, targetVarp, VAccess::READ};
+        } else if (sourceValuep) {
+            origThenp = new AstVarRef{fl, sourceValuep, VAccess::READ};
         }
 
         // Gate the DPI call on the hook's bind flag (m_condVarp): only evaluate
@@ -972,7 +976,7 @@ class DPIOverrideBuilder final {
 
         AstVarRef* dpiHookedVarRefp = new AstVarRef{fl, hookedVarp, VAccess::READ};
         AstVarRef* selVarRefp = new AstVarRef{fl, m_condVarp, VAccess::READ};
-        if (targetVarp) { drivingVarRefp = new AstVarRef{fl, targetVarp, VAccess::READ}; }
+        if (sourceValuep) { drivingVarRefp = new AstVarRef{fl, sourceValuep, VAccess::READ}; }
         if (drivingRhsp) { drivingVarRefp = drivingRhsp->cloneTree(false); }
         AstCond* condp = new AstCond{fl, selVarRefp, dpiHookedVarRefp, drivingVarRefp};
         AstVarRef* selResRefp = new AstVarRef{fl, selResp, VAccess::WRITE};
@@ -1183,6 +1187,27 @@ class DPIOverrideBuilder final {
             return;
         }
         for (auto& varRefp : m_targetEntry.varRefps) { varRefp->varp(m_selResp); }
+    }
+    bool routePartialDrivers(AstVar* targetVarp) {
+        if (!targetVarp->isOutputish()) return false;
+        const bool partial
+            = std::any_of(m_targetEntry.assignps.begin(), m_targetEntry.assignps.end(),
+                          [](AstNodeAssign* ap) { return !VN_IS(ap->lhsp(), VarRef); });
+        if (!partial) return false;
+        m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               targetVarp->name() + "_preHook", targetVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(true);
+        m_targetModp->addStmtsp(m_preVarp);
+        for (AstNodeAssign* assignp : m_targetEntry.assignps) {
+            assignp->lhsp()->foreach([&](AstNode* nodep) {
+                if (AstVarRef* const vrp = VN_CAST(nodep, VarRef)) {
+                    if (vrp->varp() == targetVarp) vrp->varp(m_preVarp);
+                }
+            });
+        }
+        m_targetEntry.assignps.clear(); // Target has no drivers left
+        return true;
     }
     void gatherOutputData(AstVar* targetVarp) {
         for (auto& assignp : m_targetEntry.assignps) {
@@ -1397,6 +1422,8 @@ public:
         AstVar* targetVarp = m_targetEntry.origVarp;
         // Insert Task/Function
         insDPITaskOrFunction();
+        // Reroute partial (bit-select) drivers of an output
+        routePartialDrivers(targetVarp);
         // Gather output information
         gatherOutputData(targetVarp);
         // Insert hooked vars and selection logic
@@ -1509,24 +1536,6 @@ public:
                                    << "' is an unpacked array or is accessed element-wise;"
                                       " hooking array-shaped targets is not supported.");
                     continue;
-                }
-                // (ii) Output assembled by partial (bit-select) assignments, e.g. a
-                // vector driven bit by bit in a generate loop. The override
-                // multiplexer replaces a whole-signal driver, which does not fit a
-                // per-bit assignment and mismatches widths later in V3DfgSynthesize.
-                if (ov->isOutputish()) {
-                    const bool partialDriver = std::any_of(
-                        entry.assignps.begin(), entry.assignps.end(),
-                        [](AstNodeAssign* ap) { return !VN_IS(ap->lhsp(), VarRef); });
-                    if (partialDriver) {
-                        ov->v3warn(E_UNSUPPORTED,
-                                   "DPI-hook target '"
-                                       << key << "." << entry.varTarget
-                                       << "' is an output driven by partial (bit-select)"
-                                          " assignments; hooking such signals is not yet"
-                                          " supported.");
-                        continue;
-                    }
                 }
                 if (!existsEntry(target->origModp, entry.origVarp)) {
                     DPIOverrideBuilder insDPIOverrideBuilder{target->origModp,

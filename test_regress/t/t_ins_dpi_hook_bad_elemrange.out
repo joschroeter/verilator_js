@@ -1,0 +1,7 @@
+%Error: t/t_ins_dpi_hook_bad_array.v:32:15: Element index 9 is out of range for target variable 'mem' in 'top_module.s' (4 elements)
+   32 |   logic [7:0] mem [4];
+      |               ^~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: DPI-hook insertion of target 'top_module.s' could not find 'var' in '__.instance.var'
+%Error: Incomplete hook-insertion configuration for target 'top_module.s.mem'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Exiting due to

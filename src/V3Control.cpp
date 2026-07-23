@@ -866,25 +866,26 @@ public:
             return cost;
         }
     }
-    std::pair<std::optional<uint32_t>, std::optional<uint32_t>> getBitRange(const string& bitRange) {
+    std::pair<std::optional<uint32_t>, std::optional<uint32_t>> getBitRange(FileLine* fl,
+                                                                           const string& bitRange) {
         // Helper for parsing a bit range string of the form "x:y" and returning the start and end positions as a pair of integers
         const auto pos = bitRange.find(':');
         if (pos == string::npos) {
-            m_profileFileLine->v3error("Invalid bit range format: '" << bitRange
+            fl->v3error("Invalid bit range format: '" << bitRange
                                                                 << "'. Expected format 'x:y'.");
             return {std::nullopt, std::nullopt};
         }
-        const uint32_t left = std::stoi(bitRange.substr(0, pos));
-        const uint32_t right = std::stoi(bitRange.substr(pos + 1));
+        const int left = std::stoi(bitRange.substr(0, pos));
+        const int right = std::stoi(bitRange.substr(pos + 1));
         if (left < 0 || right < 0) {
-            m_profileFileLine->v3error("Bit positions must be non-negative integers: '" << bitRange
+            fl->v3error("Bit positions must be non-negative integers: '" << bitRange
                                                                 << "'.");
             return {std::nullopt, std::nullopt};
         }
         if (right > left) {
             v3warn(ASCRANGE, "Ascending bit range vector: left < right of bit range: " << bitRange);
         }
-        return {left, right};
+        return {static_cast<uint32_t>(left), static_cast<uint32_t>(right)};
     }
     // Helper for adding targets to the hook-insertion config map
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
@@ -926,7 +927,7 @@ public:
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         const auto varTarget = result.second;
-        const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(bitRange);
+        const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(fl, bitRange);
         if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
             m_hookInsCfg[prefix].push_back(HookInsCfgEntry{
                 bitRangePos.first.value(), bitRangePos.second.value(), callback, varTarget});
@@ -1017,7 +1018,7 @@ void V3Control::addHookInsCfg(FileLine* fl, const string& callback, const string
     V3ControlResolver::s().addHookInsCfg(fl, callback, target, bitPos);
 }
 
-void V3Control::addHookInsCfg(FileLine* fl, const string& insFunc, const string& target, 
+void V3Control::addHookInsCfg(FileLine* fl, const string& insFunc, const string& target,
                               const string& bitRange) {
     V3ControlResolver::s().addHookInsCfg(fl, insFunc, target, bitRange);
 }

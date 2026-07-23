@@ -12,12 +12,15 @@ import vltest_bootstrap
 test.scenarios('vlt')
 test.top_filename = "t/t_ins_dpi_hook_bitsel.v"
 
+dpi_filename = "t/t_ins_dpi_hook_dpi.cpp"
 vlt_filename = "t/" + test.name + ".vlt"
 
 test.compile(make_main=False,
-             verilator_make_gmake=False,
              v_flags2=[
-                 "--timing -Wno-MULTIDRIVEN -Wno-UNOPTFLAT", vlt_filename
+                 "--timing --exe -Wno-MULTIDRIVEN -Wno-UNOPTFLAT", vlt_filename,
+                 dpi_filename, test.pli_filename
              ])
+
+test.execute(expect_filename=test.golden_filename)
 
 test.passes()

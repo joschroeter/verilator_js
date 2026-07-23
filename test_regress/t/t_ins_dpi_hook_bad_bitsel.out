@@ -1,0 +1,6 @@
+%Error-UNSUPPORTED: t/t_ins_dpi_hook_bad_bitsel.v:29:22: DPI-hook target 'top_module.s.o' is an output driven by partial (bit-select) assignments; hooking such signals is not yet supported.
+                                                       : ... note: In instance 'top_module.s'
+   29 |   output logic [3:0] o
+      |                      ^
+                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error: Exiting due to

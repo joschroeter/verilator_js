@@ -34,6 +34,7 @@ struct HookInsCfgEntry final {
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
+    std::optional<uint32_t> elemIndex;  // Unpacked-array element, from a "name[i]" target
 };
 
 class V3Control final {

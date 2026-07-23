@@ -57,6 +57,7 @@ struct HookInsertEntry final {
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
+    std::optional<uint32_t> elemIndex;  // Unpacked-array element, from a "name[i]" target
     AstVar* origVarp = nullptr;  // Original variable pointer
     AstVar* dpiHookedVarp = nullptr;  // Cloned variable pointer from original with edits
     std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
@@ -421,6 +422,19 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
         iterateChildren(nodep);
     }
+    bool hasArraySelUse(AstVar* varp) const {
+        if (!m_targetModp) return false;
+        bool found = false;
+        m_targetModp->foreach([&](AstNode* nodep) {
+            if (found) return;
+            if (const AstArraySel* const aselp = VN_CAST(nodep, ArraySel)) {
+                if (const AstVarRef* const vrp = VN_CAST(aselp->fromp(), VarRef)) {
+                    if (vrp->varp() == varp) found = true;
+                }
+            }
+        });
+        return found;
+    }
     void visit(AstVar* nodep) override {
         if (nodep->isFuncLocal()) return;
         if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
@@ -456,7 +470,20 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                                " supported");
                         return;
                     }
+                    AstUnpackArrayDType* const arrayp
+                        = VN_CAST(nodep->dtypep()->skipRefp(), UnpackArrayDType);
+                    if (entry.elemIndex && !arrayp && !hasArraySelUse(nodep)) continue;
+                    if (entry.elemIndex && arrayp
+                        && entry.elemIndex.value() >= static_cast<uint32_t>(arrayp->elementsConst())) {
+                        nodep->fileline()->v3error("Element index " << entry.elemIndex.value()
+                                                   << " is out of range for target variable '"
+                                                   << nodep->name() << "' in '" << m_currHier
+                                                   << "' (" << arrayp->elementsConst()
+                                                   << " elements)");
+                        return;
+                    }
                     AstVar* varp = nodep->cloneTree(false);
+                    if (entry.elemIndex && arrayp) varp->dtypep(arrayp->subDTypep());
                     varp->name("dpiHooked_" + nodep->name());
                     varp->origName("dpiHooked_" + nodep->name());
                     varp->isDPIHookInserted(true);
@@ -923,6 +950,7 @@ class DPIOverrideBuilder final {
     AstVar* m_dpiTriggerp;  // Provided by constructor
     AstVar* m_selResp = nullptr;
     AstVar* m_preVarp = nullptr; // Intermediate the partial drivers write to
+    AstArraySel* m_viewSelp = nullptr;  // The element view's own read; never redirected
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
@@ -1069,7 +1097,8 @@ class DPIOverrideBuilder final {
         return funcRefp;
     }
     AstNode* createDPIInterface() {
-        AstVar* targetVarp = m_targetEntry.origVarp;
+        AstVar* targetVarp
+            = m_targetEntry.dpiHookedVarp ? m_targetEntry.dpiHookedVarp : m_targetEntry.origVarp;
         string callback = m_targetEntry.callback;
         if (targetVarp->basicp()->isLiteralType() || targetVarp->basicp()->implicit()) {
             AstBasicDType* basicDTypep
@@ -1209,6 +1238,44 @@ class DPIOverrideBuilder final {
         m_targetEntry.assignps.clear(); // Target has no drivers left
         return true;
     }
+    bool routeElementTarget(AstVar* targetVarp) {
+        if (!m_targetEntry.elemIndex) return false;
+        if (!VN_IS(targetVarp->dtypep()->skipRefp(), UnpackArrayDType)) return true;
+        const uint32_t idx = m_targetEntry.elemIndex.value();
+        FileLine* const fl = m_targetModp->fileline();
+        m_preVarp = new AstVar{fl, VVarType::VAR,
+                               targetVarp->name() + "_elem" + std::to_string(idx),
+                               m_targetEntry.dpiHookedVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(true);
+        m_targetModp->addStmtsp(m_preVarp);
+        AstArraySel* const selp = new AstArraySel{
+            fl, new AstVarRef{fl, targetVarp, VAccess::READ}, new AstConst{fl, idx}};
+        selp->dtypep(m_preVarp->dtypep());
+        m_viewSelp = selp;
+        m_targetModp->addStmtsp(new AstAlways{
+            fl, VAlwaysKwd::CONT_ASSIGN, nullptr,
+            new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, selp}});
+        return true;
+    }
+    void redirectElementReads(AstVar* targetVarp) {
+        const uint32_t idx = m_targetEntry.elemIndex.value();
+        std::vector<AstArraySel*> reads;
+        m_targetModp->foreach([&](AstNode* nodep) {
+            AstArraySel* const aselp = VN_CAST(nodep, ArraySel);
+            if (!aselp || aselp == m_viewSelp) return;  // keep the view's own read
+            const AstVarRef* const vrp = VN_CAST(aselp->fromp(), VarRef);
+            if (!vrp || vrp->varp() != targetVarp || !vrp->access().isReadOnly()) return;
+            const AstConst* const idxp = VN_CAST(aselp->bitp(), Const);
+            if (!idxp || idxp->toUInt() != idx) return;
+            reads.push_back(aselp);
+        });
+        for (AstArraySel* const aselp : reads) {
+            aselp->replaceWith(
+                new AstVarRef{m_targetModp->fileline(), m_selResp, VAccess::READ});
+            VL_DO_DANGLING(aselp->deleteTree(), aselp);
+        }
+    }
     void gatherOutputData(AstVar* targetVarp) {
         for (auto& assignp : m_targetEntry.assignps) {
             AstNodeExpr* rhsp = assignp->rhsp();
@@ -1270,6 +1337,11 @@ class DPIOverrideBuilder final {
         m_selResp->lifetime(VLifetime::STATIC_IMPLICIT);
         m_selResp->trace(true);
         m_selResp->isDPIHookInserted(true);
+        if (m_targetEntry.elemIndex) {
+            m_targetModp->addStmtsp(m_selResp);
+            redirectElementReads(targetVarp);
+            return;
+        }
         if (targetVarp->isOutputish()) {
             int idx = 0;
             std::vector<DriverView> drivers = collectDrivers(targetVarp);
@@ -1424,6 +1496,8 @@ public:
         insDPITaskOrFunction();
         // Reroute partial (bit-select) drivers of an output
         routePartialDrivers(targetVarp);
+        // Give a "var[i]" target a scalar view of the selected element
+        routeElementTarget(targetVarp);
         // Gather output information
         gatherOutputData(targetVarp);
         // Insert hooked vars and selection logic
@@ -1525,10 +1599,12 @@ public:
                 // Verilator has already collapsed to a scalar but still reads through
                 // an array select (idx access). Left in, it fails later in V3Unknown
                 // ("Select from non-array").
-                const bool isArrayDType = VN_IS(ov->dtypep()->skipRefp(), UnpackArrayDType);
+                const bool isArrayDType
+                    = !entry.elemIndex && VN_IS(ov->dtypep()->skipRefp(), UnpackArrayDType);
                 const bool readViaArraySel
-                    = std::any_of(entry.varRefps.begin(), entry.varRefps.end(),
-                                  [](AstVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
+                    = !entry.elemIndex
+                      && std::any_of(entry.varRefps.begin(), entry.varRefps.end(),
+                                     [](AstVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
                 if (isArrayDType || readViaArraySel) {
                     ov->v3warn(E_UNSUPPORTED,
                                "DPI-hook target '"
@@ -1559,6 +1635,7 @@ static std::map<std::string, HookInsertTarget> buildWorkingCfg() {
             entry.bitRangeRight = cfgEntry.bitRangeRight;
             entry.callback = cfgEntry.callback;
             entry.varTarget = cfgEntry.varTarget;
+            entry.elemIndex = cfgEntry.elemIndex;
             targetp.entries.push_back(std::move(entry));
         }
     }

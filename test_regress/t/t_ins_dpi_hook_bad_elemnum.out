@@ -1,0 +1,5 @@
+%Error: t/t_ins_dpi_hook_bad_elemnum.vlt:10:1: Element index must be a non-negative integer: 'mem[x]'.
+   10 | insert_dpihook -callback "instrument_var" -var "top_module.s.mem[x]"
+      | ^~~~~~~~~~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Exiting due to

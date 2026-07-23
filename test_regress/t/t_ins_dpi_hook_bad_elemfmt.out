@@ -1,0 +1,5 @@
+%Error: t/t_ins_dpi_hook_bad_elemfmt.vlt:10:1: Invalid element select in DPI-hook target: 'mem[2'. Expected format 'name[i]'.
+   10 | insert_dpihook -callback "instrument_var" -var "top_module.s.mem[2"
+      | ^~~~~~~~~~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Exiting due to

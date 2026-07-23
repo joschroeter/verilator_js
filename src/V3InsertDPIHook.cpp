@@ -1,15 +1,15 @@
 // -*- mode: C++; c-file-style: "cc-mode" -*-
 //**************************************************************************
-// DESCRIPTION: Verilator:
+// DESCRIPTION: Verilator: Insert DPI hooks at configured signal targets
 //
 // Code available from: https://verilator.org
 //
 //**************************************************************************
 //
-// Copyright 2003-2025 by Wilson Snyder. This program is free software; you
-// can redistribute it and/or modify it under the terms of either the GNU
-// Lesser General Public License Version 3 or the Perl Artistic License
-// Version 2.0.
+// This program is free software; you can redistribute it and/or modify it
+// under the terms of either the GNU Lesser General Public License Version 3
+// or the Perl Artistic License Version 2.0.
+// SPDX-FileCopyrightText: 2003-2026 Wilson Snyder
 // SPDX-License-Identifier: LGPL-3.0-only OR Artistic-2.0
 //
 //*************************************************************************
@@ -41,12 +41,12 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 static constexpr int DPIHOOK_MAX_TARGETS = 4;
 static constexpr int DPIHOOK_MAX_TARGETS_BITS = 2;  // ceil(log2(DPIHOOK_MAX_TARGETS))
 
-struct SelResEntry {
+struct SelResEntry final {
     AstVar* drivingSelResp = nullptr;
     AstVar* selResp = nullptr;
     AstVar* hookedVarp = nullptr;
 };
-struct DTypeCache {
+struct DTypeCache final {
     AstBasicDType* stringDTypep = nullptr;
     AstBasicDType* intDTypep = nullptr;
     AstUnpackArrayDType* partArraySelDTypep = nullptr;
@@ -77,7 +77,7 @@ struct HookInsertTarget final {
 //##################################################################################
 // Shared builder for the "path filter" always-block emitted by path router
 // (HookPathRouter::addPathFilter) and override builder (DPIOverrideBuilder::insTargetFilter).
-struct PathFilterConfig {
+struct PathFilterConfig final {
     AstModule* modp = nullptr;  // Module receiving the always block (also source of fileline)
     AstBasicDType* intDTypep = nullptr;  // Signed-int dtype for the loop index (pre-registered)
     AstBasicDType* stringDTypep = nullptr;  // String dtype for the decoded part (pre-registered)
@@ -89,10 +89,10 @@ struct PathFilterConfig {
                                         // always body (false)
     string alwaysName;  // Name given to the generated begin/always block
     std::unordered_map<AstModule*, AstCase*>* caseCachep = nullptr;  // Cache to register case in
-    std::unordered_map<AstModule*, AstVar*>* 
-        loopVarCachep = nullptr; // Cache to register loop index var in, keyed by module. 
+    std::unordered_map<AstModule*, AstVar*>*
+        loopVarCachep = nullptr; // Cache to register loop index var in, keyed by module.
 };
-struct PathFilterResult {
+struct PathFilterResult final {
     AstCase* casep = nullptr;  // The (still item-less) case statement
     AstVarRef* loopVarRefRp = nullptr;  // READ ref to the loop index, for case-item building
     AstArraySel* partArraySelp = nullptr;  // Inner arraysel: hookPath[i]
@@ -525,8 +525,8 @@ public:
     //-------------------------------------------------------------------------------
     explicit HookInsTargetFndrVisitor(AstNetlist* nodep,
                                       std::map<std::string, HookInsertTarget>& insCfg)
-        : m_netlistp(nodep)
-        , m_insCfg(insCfg) {
+        : m_netlistp{nodep}
+        , m_insCfg{insCfg} {
         for (const auto& pair : m_insCfg) {
             VL_RESTORER(m_foundTopMod);
             VL_RESTORER(m_foundCellp);
@@ -883,12 +883,12 @@ public:
     HookPathRouter(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
                   DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache,
                   std::unordered_map<AstModule*, AstVar*>& loopVarCache)
-        : m_netlistp(nodep)
-        , m_insTarget(insTarget)
-        , m_cfgKey(cfgKey)
-        , m_dtypeCache(dtypeCache)
-        , m_caseCache(caseCache)
-        , m_loopVarCache(loopVarCache) {}
+        : m_netlistp{nodep}
+        , m_insTarget{insTarget}
+        , m_cfgKey{cfgKey}
+        , m_dtypeCache{dtypeCache}
+        , m_caseCache{caseCache}
+        , m_loopVarCache{loopVarCache} {}
 
     void insert() {
         std::vector<AstVar*> dpihookCaseIdps;
@@ -902,13 +902,13 @@ public:
 };
 
 class DPIOverrideBuilder final {
-    struct RhsReplaceEntry {
+    struct RhsReplaceEntry final {
         AstNodeExpr* rhsp = nullptr;  // Driving rhs expression (was the map key's second element)
         SelResEntry entry;  // Selection-result payload (hookedVarp, selResp, drivingSelResp)
     };
     // Unified read view over both driver sources (m_selResMap + m_rhsReplaceEntries) so the
     // insertion loops iterate a single sequence instead of duplicating logic per container.
-    struct DriverView {
+    struct DriverView final {
         SelResEntry* payloadp = nullptr;
         AstNodeExpr* drivingExprp = nullptr;  // non-null only for rhs-expression drivers
     };
@@ -926,7 +926,7 @@ class DPIOverrideBuilder final {
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
     std::unordered_map<AstModule*, AstCase*>& m_caseCache;  // Provided by constructor
-    std::unordered_map<AstModule*, AstVar*>& 
+    std::unordered_map<AstModule*, AstVar*>&
         m_targetLoopVarCache; // Loop index var of each module's DPIHOOK_TARGET_FILTER
 
     // Methods
@@ -1299,6 +1299,8 @@ class DPIOverrideBuilder final {
             AstNode* dpip = createDPIInterface();
             AstFunc* funcp = VN_CAST(dpip, Func);
             AstTask* taskp = VN_CAST(dpip, Task);
+            UASSERT_OBJ(funcp || taskp, m_targetEntry.origVarp,
+                        "DPI-hook: failed to create DPI interface for target");
             if (funcp) {
                 m_funcp = funcp;
                 m_funcp->dpiImport(true);
@@ -1310,13 +1312,6 @@ class DPIOverrideBuilder final {
                 m_taskp->dpiImport(true);
                 m_taskp->prototype(true);
                 m_targetModp->addStmtsp(m_taskp);
-            }
-            if(!funcp && !taskp) {
-                m_targetModp->fileline()->v3error(
-                    "Failed to create DPI interface for variable: '"
-                    << m_targetEntry.origVarp->name() << "'"
-                );
-                return;
             }
         }
     }
@@ -1389,13 +1384,13 @@ public:
               HookInsertEntry& targetEntry, std::unordered_map<AstModule*, AstCase*>& caseCache,
               std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap,
               std::unordered_map<AstModule*, AstVar*>& targetLoopVarCache)
-        : m_targetModp(targetModule)
-        , m_typeTablep(typeTablep)
-        , m_dpiTriggerp(dpiTriggerp)
-        , m_targetEntry(targetEntry)
-        , m_caseCache(caseCache)
-        , m_selResMap(selResMap)
-        , m_targetLoopVarCache(targetLoopVarCache) {}
+        : m_targetModp{targetModule}
+        , m_typeTablep{typeTablep}
+        , m_dpiTriggerp{dpiTriggerp}
+        , m_targetEntry{targetEntry}
+        , m_caseCache{caseCache}
+        , m_selResMap{selResMap}
+        , m_targetLoopVarCache{targetLoopVarCache} {}
     void insert() {
         VL_RESTORER(m_selResp);
         AstVar* hookedVarp = m_targetEntry.dpiHookedVarp;
@@ -1440,8 +1435,8 @@ class DPIHookInserter final {
 
 public:
     DPIHookInserter(AstNetlist* nodep, std::map<std::string, HookInsertTarget>& insCfg)
-        : m_netlistp(nodep)
-        , m_insCfg(insCfg) {}
+        : m_netlistp{nodep}
+        , m_insCfg{insCfg} {}
 
     void insDPIHooks() {
         AstTypeTable* typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);

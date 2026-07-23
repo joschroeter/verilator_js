@@ -1,6 +1,6 @@
-%Error-UNSUPPORTED: t/t_ins_dpi_hook_bad_array.v:31:15: DPI-hook target 'top_module.s.mem' is an unpacked array or is accessed element-wise; hooking array-shaped targets is not supported.
+%Error-UNSUPPORTED: t/t_ins_dpi_hook_bad_array.v:32:15: DPI-hook target 'top_module.s.mem' is an unpacked array or is accessed element-wise; hooking array-shaped targets is not supported.
                                                       : ... note: In instance 'top_module.s'
-   31 |   logic [7:0] mem [4];
+   32 |   logic [7:0] mem [4];
       |               ^~~
                     ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
 %Error: Exiting due to

@@ -8463,7 +8463,7 @@ vltItem:
                         { V3Control::addInline($<fl>1, *$2, *$3, $1); }
         |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING
                         { v3Global.setInsDPIHooks();
-                                V3Control::addHookInsCfg($<fl>1, *$3, *$5); 
+                                V3Control::addHookInsCfg($<fl>1, *$3, *$5);
                         }
         |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING yVLT_D_BITPOS yaINTNUM
                         { v3Global.setInsDPIHooks ();

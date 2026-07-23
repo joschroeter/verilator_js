@@ -2,6 +2,7 @@
 //
 // This file ONLY is placed under the Creative Commons Public Domain, for
 // any use, without warranty, 2012 by Wilson Snyder.
+// SPDX-FileCopyrightText: 2025 Wilson Snyder
 // SPDX-License-Identifier: CC0-1.0
 
 module top_module;
@@ -37,7 +38,7 @@ module top_module;
       $display("$[%0t| outa: %0d | outb: %0d]", $time, outa, outb);
     end
 
-    // 63 <= t <= 78 → no changes
+    // 63 <= t <= 78 -> no changes
     repeat (15) begin
       #1;
       $display("$[%0t| outa: %0d | outb: %0d]", $time, outa, outb);

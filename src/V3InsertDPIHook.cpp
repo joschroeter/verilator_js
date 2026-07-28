@@ -344,21 +344,28 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                 foundModp = true;
                 m_modp = nodep;
                 m_currHier = nodep->name();
-                // Manually iterating over the cells so we can get the modp of the in the target
-                // string defined cell. Cell visitor is then used with this m_cellModp set to
-                // find all cells that refere to this Module
-                for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
-                    if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
-                        if (targetHasPrefix(m_currHier + "." + cellLv2p->name(), m_target)) {
-                            m_cellModp = cellLv2p->modp();
-                            m_foundCellp = true;
-                            m_currHier = m_currHier + "." + cellLv2p->name();
-                            break;
+                if (targetHasFullName(m_currHier, m_target)) {
+                    m_targetModp = nodep;
+                    m_foundCellp = true;  // no instance hop -> suppress the "instance" error
+                    setOrigModule(nodep, m_target);
+                    iterateChildren(nodep);  // Continue to var node
+                } else {
+                    // Manually iterating over the cells so we can get the modp of the in the
+                    // target string defined cell. Cell visitor is then used with this m_cellModp
+                    // set to find all cells that refere to this Module
+                    for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
+                        if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
+                            if (targetHasPrefix(m_currHier + "." + cellLv2p->name(), m_target)) {
+                                m_cellModp = cellLv2p->modp();
+                                m_foundCellp = true;
+                                m_currHier = m_currHier + "." + cellLv2p->name();
+                                break;
+                            }
                         }
                     }
+                    setModules(nodep, m_target);
+                    iterateChildren(nodep);  // Continue to Cell/Var nodes
                 }
-                setModules(nodep, m_target);
-                iterateChildren(nodep);  // Continue to Cell/Var nodes
                 m_foundTopMod = false;
             } else if (!foundModp && nodep->name() == "@CONST-POOL@") {
                 nodep->fileline()->v3error("DPI-hook insertion of target '"

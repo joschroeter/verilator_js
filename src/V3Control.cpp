@@ -891,12 +891,10 @@ public:
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
         // Check if the instrumentation config wants to insert a hook into a variable in the top module
         const auto pos = target.rfind('.');
-        // Error MSG if the hook-insertion of the top module is not possible
-        if ((std::count(target.begin(), target.end(), '.') < 2)) {
+        if ((std::count(target.begin(), target.end(), '.') < 1)) {
             fl->v3error("DPI-hook insertion of target variable '"
-                        << target << "' not supported on top module");
+                        << target << "' must be qualified with at least the top module");
         }
-        // Since we checked for at least two dots before, there always should be a prefix
         const string prefix = target.substr(0, pos);
         const string varTarget = target.substr(pos + 1);
         return {prefix, varTarget};

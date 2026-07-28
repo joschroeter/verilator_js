@@ -31,6 +31,7 @@
 
 #include <iostream>
 #include <map>
+#include <set>
 #include <optional>
 #include <vector>
 
@@ -587,6 +588,7 @@ class HookPathRouter final {
     HookInsertTarget& m_insTarget;
     std::unordered_map<AstModule*, AstCase*>& m_caseCache;
     std::unordered_map<AstModule*, AstVar*>& m_loopVarCache;  // Shared path-filter loop indices
+    std::unordered_map<AstModule*, std::set<std::string>>& m_caseChildCells; // Child-cell case items
 
     // Methods
     AstLoop* finalizeLoopp(AstLoop* loopp, AstVar* dpiTriggerp) {
@@ -835,6 +837,23 @@ class HookPathRouter final {
         insertCaseItems(modp, res.casep, hookPathp, res.loopVarRefRp, idx, instPathVarps);
         res.partArraySelp->dtypep(m_dtypeCache.partArraySelDTypep);
     }
+    string childCellNameAt(AstModule* modp) {
+        for (AstCell* cellp : m_insTarget.cellps) {
+            for (AstNode* nodep = modp->op2p(); nodep; nodep = nodep->nextp()) {
+                if (VN_CAST(nodep, Cell) == cellp) return cellp->name();
+            }
+        }
+        return "";
+    }
+    void addCaseItemToExisting(AstModule* modp, AstVar* hookPathp, int idx,
+                               std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+        AstCase* const casep = m_caseCache[modp];
+        AstVar* const loopVarp = m_loopVarCache[modp];
+        if (!casep || !loopVarp) return;
+        AstVarRef* const loopVarRefp
+            = new AstVarRef{modp->fileline(), loopVarp, VAccess::READ};
+        insertCaseItems(modp, casep, hookPathp, loopVarRefp, idx, instPathVarps);
+    }
     void addSelPin(AstCell* cellp, int idx,
                    const std::vector<AstVar*>& dpihookPathps,
                    const std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
@@ -875,7 +894,18 @@ class HookPathRouter final {
             AstVar* hookPathp = findExistingInputVar(modp, "DPIHOOK_PATH");
             if (!hookPathp) hookPathp = addSelInput(modp, idx);
             dpihookPathps.push_back(hookPathp);
-            if (!hasPathFilter(modp)) addPathFilter(modp, hookPathp, idx, instPathVarps);
+            const string childName = childCellNameAt(modp);
+            std::set<std::string>& seen = m_caseChildCells[modp];
+            if (!hasPathFilter(modp)) {
+                // First hook to reach modp: build the filter and add its item.
+                addPathFilter(modp, hookPathp, idx, instPathVarps);
+                if (!childName.empty()) seen.insert(childName);
+            } else if (!childName.empty() && !seen.count(childName)) {
+                // A sibling target already built the filter, but it routes into a
+                // different child instance; add this instance's branch too.
+                addCaseItemToExisting(modp, hookPathp, idx, instPathVarps);
+                seen.insert(childName);
+            }
             m_dtypeCache.partArraySelDTypep = nullptr;
             idx++;
         }
@@ -909,13 +939,15 @@ class HookPathRouter final {
 public:
     HookPathRouter(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
                   DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache,
-                  std::unordered_map<AstModule*, AstVar*>& loopVarCache)
+                  std::unordered_map<AstModule*, AstVar*>& loopVarCache,
+                  std::unordered_map<AstModule*, std::set<std::string>>& caseChildCells)
         : m_netlistp{nodep}
         , m_insTarget{insTarget}
         , m_cfgKey{cfgKey}
         , m_dtypeCache{dtypeCache}
         , m_caseCache{caseCache}
-        , m_loopVarCache{loopVarCache} {}
+        , m_loopVarCache{loopVarCache}
+        , m_caseChildCells{caseChildCells} {}
 
     void insert() {
         std::vector<AstVar*> dpihookCaseIdps;
@@ -1544,6 +1576,7 @@ public:
         DTypeCache dtypeCache;
         std::unordered_map<AstModule*, AstCase*> caseCache;
         std::unordered_map<AstModule*, AstVar*> targetLoopVarCache;
+        std::unordered_map<AstModule*, std::set<std::string>> caseCells;
         // Map in Vector kopieren
         std::vector<std::pair<std::string, HookInsertTarget*>> sortedCfg;
         for (auto& [key, target] : m_insCfg) { sortedCfg.emplace_back(key, &target); }
@@ -1565,7 +1598,7 @@ public:
             }
             // PathModule anpassen
             HookPathRouter insPathRouter{m_netlistp, *target, key, dtypeCache, caseCache,
-                                         targetLoopVarCache};
+                                         targetLoopVarCache, caseCells};
             insPathRouter.insert();
             // Validate all entries before sorting
             for (auto& entry : target->entries) {

@@ -790,7 +790,7 @@ class HookPathRouter final {
                         AstCaseItem* caseItemp
                             = new AstCaseItem{modp->fileline(), cvtPackStringp, assignp};
                         casep->addItemsp(caseItemp);
-                        return;
+                        break;
                     }
                     AstBegin* beginp = new AstBegin{modp->fileline(), "", assignp, false};
                     AstCaseItem* caseItemp

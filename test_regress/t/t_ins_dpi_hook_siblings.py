@@ -11,7 +11,7 @@
 import vltest_bootstrap
 
 test.scenarios('vlt')
-test.top_filename = "t/t_ins_dpi_hook_elem.v"
+test.top_filename = "t/t_ins_dpi_hook_siblings.v"
 
 dpi_filename = "t/t_ins_dpi_hook_dpi.cpp"
 vlt_filename = "t/" + test.name + ".vlt"

@@ -8,35 +8,38 @@
 module top_module;
   logic       clk = 0;
   logic [7:0] a = 8'd10;
-  logic [7:0] q;
+  logic [7:0] qa, qb;
 
-  sub s (.a(a), .q(q));
+  subA ia (.a(a), .q(qa));
+  subB ib (.a(a), .q(qb));
 
   int cyc = 0;
   always #5 clk = ~clk;
 
   always @(posedge clk) begin
     cyc <= cyc + 1;
-    $display("$[%0d| q: %0d]", cyc, q);
-    if (cyc > 5) begin
+    $display("$[%0d| qa: %0d qb: %0d]", cyc, qa, qb);
+    if (cyc > 6) begin
       $display("*-* All Finished *-*");
       $finish;
     end
   end
 endmodule
 
-module sub (
+module subA (
   input  logic [7:0] a,
   output logic [7:0] q
 );
-  logic [7:0] mem [4];
+  logic [7:0] va;
+  always_comb va = a + 8'd2;
+  assign q = va;
+endmodule
 
-  always_comb begin
-    mem[0] = a;
-    mem[1] = a + 8'd1;
-    mem[2] = a + 8'd2;
-    mem[3] = a + 8'd3;
-  end
-
-  assign q = mem[2];
+module subB (
+  input  logic [7:0] a,
+  output logic [7:0] q
+);
+  logic [7:0] vb;
+  always_comb vb = a + 8'd3;
+  assign q = vb;
 endmodule

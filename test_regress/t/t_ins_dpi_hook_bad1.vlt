@@ -7,4 +7,4 @@
 
 `verilator_config
 
-insert_dpihook -callback "instrument_var" -var "top_module.outa"
+insert_dpihook -callback "instrument_var" -var "outa"

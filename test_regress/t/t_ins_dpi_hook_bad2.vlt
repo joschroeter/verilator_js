@@ -15,4 +15,3 @@ insert_dpihook -callback "instrument_var" -var "top_module.a1.b3.out"
 
 insert_dpihook -callback "instrument_var" -var "top_module.a1.b1.clk"
 
-insert_dpihook -callback "instrument_var" -var "top_module.a1.b1.bigRegister"

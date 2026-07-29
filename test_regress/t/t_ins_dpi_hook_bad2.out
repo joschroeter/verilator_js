@@ -1,8 +1,5 @@
 %Error: DPI-hook insertion of target 'top.a1.b1' could not find initial 'module' in 'topModule.instance.__'
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: t/t_ins_dpi_hook.v:75:15: Target variable 'bigRegister' in 'top_module.a1.b1' must be a supported type
-   75 |   reg [127:0] bigRegister;
-      |               ^~~~~~~~~~~
 %Error: DPI-hook insertion of target 'top_module.a1.b1' could not find 'var' in '__.instance.var'
 %Error: t/t_ins_dpi_hook.v:70:8: DPI-hook insertion of target 'top_module.a1.b3' could not find 'instance' in '__.instance.__'
    70 | module module_b (

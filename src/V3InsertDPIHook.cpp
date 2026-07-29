@@ -457,10 +457,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                     // Total bit width of the target. basicp()->rangep() is null for some packed
                     // vectors (e.g. reg [127:0]), which used to leave width at 0 and silently let
                     // >64-bit targets through; use the resolved var width instead.
-                    const int width = nodep->width();
                     const bool isUnsupportedType = !literal && !implicit;
-                    const bool isUnsupportedWidth = literal && width > 64;
-                    if (isUnsupportedType || isUnsupportedWidth) {
+                    if (isUnsupportedType) {
                         nodep->fileline()->v3error("Target variable '"
                                                    << nodep->name() << "' in '" << m_currHier
                                                    << "' must be a supported type");
@@ -1016,10 +1014,6 @@ class DPIOverrideBuilder final {
         // Not targetVarp: this hook drives it, so reading it back would form a loop
         AstVar* const sourceValuep = m_preVarp ? m_preVarp : targetVarp;
 
-        // DPI fault-function call for this hook.
-        AstFuncRef* funcRefp = new AstFuncRef{fl, m_funcp, nullptr};
-        funcRefp = finalizeFuncRef(funcRefp, sourceValuep, drivingRhsp);
-
         // The unperturbed (passthrough) value of the driven signal.
         AstNodeExpr* origThenp = nullptr;
         if (drivingRhsp) {
@@ -1028,11 +1022,19 @@ class DPIOverrideBuilder final {
             origThenp = new AstVarRef{fl, sourceValuep, VAccess::READ};
         }
 
-        // Gate the DPI call on the hook's bind flag (m_condVarp): only evaluate
-        // the fault function when this hook has actually been bound to a target
-        // at runtime.
-        AstAssign* thenp
-            = new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, funcRefp};
+        // Gate the DPI call on the hook's bind flag (m_condVarp): only evaluate the
+        // fault callback when this hook is actually bound at runtime.
+        AstNode* thenp = nullptr;
+        if (m_taskp) {
+            AstTaskRef* taskRefp = new AstTaskRef{fl, m_taskp, nullptr};
+            taskRefp->addArgsp(new AstArg{fl, "", new AstVarRef{fl, hookedVarp, VAccess::WRITE}});
+            finalizeFuncRef(taskRefp, sourceValuep, drivingRhsp);
+            thenp = new AstStmtExpr{fl, taskRefp};
+        } else {
+            AstFuncRef* funcRefp = new AstFuncRef{fl, m_funcp, nullptr};
+            finalizeFuncRef(funcRefp, sourceValuep, drivingRhsp);
+            thenp = new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, funcRefp};
+        }
         AstNode* elsep
             = origThenp
                   ? new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, origThenp}
@@ -1051,7 +1053,7 @@ class DPIOverrideBuilder final {
         AstAlways* alwaysp = new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignwp};
         return alwaysp;
     }
-    AstFunc* finalizeFunc(AstFunc* funcp, AstVar* drivingVarp) {
+    AstNodeFTask* finalizeFunc(AstNodeFTask* funcp, AstVar* drivingVarp) {
         AstVar* dpiTriggerp = nullptr;
         AstVar* insIDp = nullptr;
         AstVar* varXFunc = nullptr;
@@ -1104,8 +1106,8 @@ class DPIOverrideBuilder final {
 
         return funcp;
     }
-    AstFuncRef* finalizeFuncRef(AstFuncRef* funcRefp, AstVar* targetVarp,
-                                AstNodeExpr* drivingRhsp) {
+    void finalizeFuncRef(AstNodeFTaskRef* funcRefp, AstVar* targetVarp,
+                         AstNodeExpr* drivingRhsp) {
         AstVarRef* caseIdRefp
             = new AstVarRef{funcRefp->fileline(), m_caseIdVarp, VAccess::READ};
         //AstConst* constIDp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
@@ -1129,17 +1131,27 @@ class DPIOverrideBuilder final {
         }
         if (drivingRhsp) {
             funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", drivingRhsp});
-            return funcRefp;
+            return;
         }
         AstVarRef* varrefp = new AstVarRef{funcRefp->fileline(), targetVarp, VAccess::READ};
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", varrefp});
-        return funcRefp;
     }
     AstNode* createDPIInterface() {
         AstVar* targetVarp
             = m_targetEntry.dpiHookedVarp ? m_targetEntry.dpiHookedVarp : m_targetEntry.origVarp;
         string callback = m_targetEntry.callback;
         if (targetVarp->basicp()->isLiteralType() || targetVarp->basicp()->implicit()) {
+            if (targetVarp->width() > 64) {
+                AstTask* taskp
+                    = new AstTask{m_targetModp->fileline(), callback, nullptr};
+                AstVar* resultp = new AstVar{m_targetModp->fileline(), VVarType::PORT,
+                                             "result", targetVarp->dtypep()};
+                resultp->direction(VDirection::OUTPUT);
+                resultp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+                resultp->funcLocal(true);
+                taskp->addStmtsp(resultp);
+                return finalizeFunc(taskp, targetVarp);
+            }
             AstBasicDType* basicDTypep
                 = new AstBasicDType{m_targetModp->fileline(),
                                     getBasicDType(targetVarp->width(), targetVarp->basicp())};
@@ -1451,7 +1463,7 @@ class DPIOverrideBuilder final {
             }
         }
     }
-    void insFuncHandler(AstVar* hookedVarp, AstVar* targetVarp) {
+    void insHandler(AstVar* hookedVarp, AstVar* targetVarp) {
         AstAlways* handlerp = nullptr;
         if (targetVarp->isOutputish()) {
             for (const DriverView& d : collectDrivers(targetVarp)) {
@@ -1511,9 +1523,6 @@ class DPIOverrideBuilder final {
         res.targetArraySelp->dtypep(hookPathp->dtypep());
         return res.casep;
     }
-    void insTaskHandler() {
-        //TODO: Wie koennen Tasks genutzt werden? [5]
-    }
 
 public:
     DPIOverrideBuilder(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
@@ -1544,11 +1553,9 @@ public:
         insCaseIdVarp(targetVarp);
         insHookedVarp(hookedVarp, targetVarp);
         insCondResVarp(hookedVarp, targetVarp);
-        // Insert Task/Func handler
-        if (m_taskp) {
-            insTaskHandler();
-        } else if (m_funcp) {
-            insFuncHandler(hookedVarp, targetVarp);
+        // Insert the override handler (createHandler branches func vs. task internally)
+        if (m_funcp || m_taskp) {
+            insHandler(hookedVarp, targetVarp);
         }
         AstCase* casep = findTargetFilter();
         if (!casep) casep = insTargetFilter();

@@ -1442,6 +1442,19 @@ class DPIOverrideBuilder final {
         m_caseIdVarp->trace(false);
         m_targetModp->addStmtsp(m_caseIdVarp);
     }
+    int existingCallbackWidth() const {
+        if (m_taskp) {
+            for (AstNode* np = m_taskp->stmtsp(); np; np = np->nextp()) {
+                AstVar* const varp = VN_CAST(np, Var);
+                if (varp && varp->isFuncLocal() && varp->direction() == VDirection::OUTPUT) {
+                    return varp->width();
+                }
+            }
+            return -1;
+        }
+        if (m_funcp && m_funcp->dtypep()) return m_funcp->dtypep()->width();
+        return -1;
+    }
     void insDPITaskOrFunction() {
         if (!hasFuncOrTask()) {
             AstNode* dpip = createDPIInterface();
@@ -1460,6 +1473,19 @@ class DPIOverrideBuilder final {
                 m_taskp->dpiImport(true);
                 m_taskp->prototype(true);
                 m_targetModp->addStmtsp(m_taskp);
+            }
+        } else {
+            AstVar* const targetVarp = m_targetEntry.dpiHookedVarp
+                                           ? m_targetEntry.dpiHookedVarp
+                                           : m_targetEntry.origVarp;
+            const int existingWidth = existingCallbackWidth();
+            if (existingWidth >= 0 && targetVarp && existingWidth != targetVarp->width()) {
+                targetVarp->v3error(
+                    "DPI-hook callback '"
+                    << m_targetEntry.callback << "' is reused for a target of width "
+                    << targetVarp->width() << ", but was already used for width "
+                    << existingWidth
+                    << "; use a distinct callback name per signal width");
             }
         }
     }

@@ -30,6 +30,7 @@ module sub (
   output logic [7:0] q
 );
   logic [7:0] mem [4];
+  logic [7:0] bigmem [512];  // exceeds whole-array hook limit
 
   always_comb begin
     mem[0] = a;

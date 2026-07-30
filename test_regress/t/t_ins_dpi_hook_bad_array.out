@@ -1,6 +1,6 @@
-%Error-UNSUPPORTED: t/t_ins_dpi_hook_bad_array.v:32:15: DPI-hook target 'top_module.s.mem' is an unpacked array or is accessed element-wise; hooking array-shaped targets is not supported.
-                                                      : ... note: In instance 'top_module.s'
-   32 |   logic [7:0] mem [4];
-      |               ^~~
-                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error: t/t_ins_dpi_hook_bad_array.v:33:15: Target variable 'bigmem' in 'top_module.s' is an unpacked array with 512 elements, too large to hook as a whole (limit 256); target individual elements with 'bigmem[i]' instead
+   33 |   logic [7:0] bigmem [512];   
+      |               ^~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Incomplete hook-insertion configuration for target 'top_module.s.bigmem'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
 %Error: Exiting due to

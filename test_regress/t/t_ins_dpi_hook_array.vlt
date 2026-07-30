@@ -7,4 +7,4 @@
 
 `verilator_config
 
-insert_dpihook -callback "instrument_var" -var "top_module.s.bigmem"
+insert_dpihook -callback "cb_array" -var "top_module.mem"

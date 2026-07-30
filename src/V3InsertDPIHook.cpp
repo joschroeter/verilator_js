@@ -52,11 +52,50 @@ struct DTypeCache final {
     AstBasicDType* intDTypep = nullptr;
     AstUnpackArrayDType* partArraySelDTypep = nullptr;
 };
-struct MirrorLeaf final {
-    std::string name;  // Field name (for the AstStructSel to redirect)
-    int lsb;  // LSB of this field within the mirror vector
-    int width;  // Field width in bits
-};
+static int aggBitWidth(AstNodeDType* dtp) {
+    dtp = dtp->skipRefp();
+    if (const AstStructDType* const sp = VN_CAST(dtp, StructDType)) {
+        if (sp->packed()) return dtp->width();
+        int w = 0;
+        for (AstMemberDType* m = sp->membersp(); m; m = VN_CAST(m->nextp(), MemberDType)) {
+            const int mw = aggBitWidth(m->subDTypep());
+            if (mw < 0) return -1;
+            w += mw;
+        }
+        return w;
+    }
+    if (const AstUnpackArrayDType* const ap = VN_CAST(dtp, UnpackArrayDType)) {
+        const int ew = aggBitWidth(ap->subDTypep());
+        return ew < 0 ? -1 : ap->elementsConst() * ew;
+    }
+    if (dtp->basicp()) return dtp->width();  // basic / packed leaf
+    return -1;  // unsupported aggregate leaf
+}
+static int aggLeafCount(AstNodeDType* dtp) {
+    dtp = dtp->skipRefp();
+    if (const AstStructDType* const sp = VN_CAST(dtp, StructDType)) {
+        if (sp->packed()) return 1;
+        int n = 0;
+        for (AstMemberDType* m = sp->membersp(); m; m = VN_CAST(m->nextp(), MemberDType)) {
+            const int mn = aggLeafCount(m->subDTypep());
+            if (mn < 0) return -1;
+            n += mn;
+        }
+        return n;
+    }
+    if (const AstUnpackArrayDType* const ap = VN_CAST(dtp, UnpackArrayDType)) {
+        const int en = aggLeafCount(ap->subDTypep());
+        return en < 0 ? -1 : ap->elementsConst() * en;
+    }
+    if (dtp->basicp()) return 1;
+    return -1;
+}
+static bool aggIsLeafDType(AstNodeDType* dtp) {
+    dtp = dtp->skipRefp();
+    if (const AstStructDType* const sp = VN_CAST(dtp, StructDType)) return sp->packed();
+    if (VN_IS(dtp, UnpackArrayDType)) return false;
+    return dtp->basicp() != nullptr;
+}
 struct HookInsertEntry final {
     std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
@@ -71,10 +110,6 @@ struct HookInsertEntry final {
     bool done = false;  // Whether the hook insertion has been completed for a signal
     bool isAggregateMirror = false;
     AstVar* aggregateVarp = nullptr;  // The original unpacked aggregate var
-    std::vector<MirrorLeaf> mirrorLeaves;  // Field layout within the mirror vector
-    bool aggIsArray = false;
-    int arrayElems = 0;
-    int arrayElemW = 0;
 };
 struct HookInsertTarget final {
     AstModule* origModp = nullptr;  // Original module pointer containing target var
@@ -505,82 +540,59 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         }
         return mirrorp;
     }
-    template <typename Fill>
-    void setAggregateEntry(AstVar* aggVarp, Fill fill) {
-        const auto it = m_insCfg.find(m_target);
-        if (it == m_insCfg.end()) return;
-        for (auto& e : it->second.entries) {
-            if (e.varTarget == aggVarp->name()) fill(e);
+    void collectLeafAccesses(AstNodeExpr* accessp, AstNodeDType* dtp,
+                             std::vector<AstNodeExpr*>& leaves, std::vector<int>& widths) {
+        AstNodeDType* const sdtp = dtp->skipRefp();
+        FileLine* const fl = accessp->fileline();
+        if (aggIsLeafDType(sdtp)) {
+            accessp->dtypep(sdtp);
+            leaves.push_back(accessp);
+            widths.push_back(sdtp->width());
+            return;
         }
+        if (AstStructDType* const sp = VN_CAST(sdtp, StructDType)) {
+            for (AstMemberDType* m = sp->membersp(); m; m = VN_CAST(m->nextp(), MemberDType)) {
+                AstStructSel* const selp
+                    = new AstStructSel{fl, accessp->cloneTree(false), m->name()};
+                selp->dtypep(m->subDTypep());
+                collectLeafAccesses(selp, m->subDTypep(), leaves, widths);
+            }
+        } else if (AstUnpackArrayDType* const ap = VN_CAST(sdtp, UnpackArrayDType)) {
+            const int n = ap->elementsConst();
+            for (int i = 0; i < n; ++i) {
+                AstArraySel* const selp = new AstArraySel{
+                    fl, accessp->cloneTree(false), new AstConst{fl, static_cast<uint32_t>(i)}};
+                selp->dtypep(ap->subDTypep());
+                collectLeafAccesses(selp, ap->subDTypep(), leaves, widths);
+            }
+        }
+        VL_DO_DANGLING(accessp->deleteTree(), accessp);
     }
-    bool expandUnpackedStructToMirror(AstVar* aggVarp) {
-        AstStructDType* const structp = VN_CAST(aggVarp->dtypep()->skipRefp(), StructDType);
-        if (!structp || structp->packed()) return false;  // only unpacked structs here
-        FileLine* const fl = aggVarp->fileline();
-        std::vector<AstNodeExpr*> leaves;
-        std::vector<int> widths;
-        std::vector<MirrorLeaf> layout;
-        int totalW = 0;
-        for (AstMemberDType* memberp = structp->membersp(); memberp;
-             memberp = VN_CAST(memberp->nextp(), MemberDType)) {
-            if (!memberp->subDTypep()->basicp()) return false;
-            AstStructSel* const selp
-                = new AstStructSel{fl, new AstVarRef{fl, aggVarp, VAccess::READ}, memberp->name()};
-            selp->dtypep(memberp->subDTypep());
-            leaves.push_back(selp);
-            widths.push_back(memberp->width());
-            totalW += memberp->width();
-        }
-        if (leaves.empty()) return false;
-        int consumed = 0;
-        for (size_t i = 0; i < leaves.size(); ++i) {
-            consumed += widths[i];
-            layout.push_back(MirrorLeaf{VN_AS(leaves[i], StructSel)->name(), totalW - consumed,
-                                        widths[i]});
-        }
-        buildAggregateMirror(aggVarp, leaves, widths, totalW);
-        setAggregateEntry(aggVarp, [&](HookInsertEntry& e) { e.mirrorLeaves = layout; });
-        return true;
-    }
-    static constexpr int DPIHOOK_MAX_ARRAY_ELEMS = 256;
-    bool expandUnpackedArrayToMirror(AstVar* aggVarp) {
-        AstUnpackArrayDType* const arrp
-            = VN_CAST(aggVarp->dtypep()->skipRefp(), UnpackArrayDType);
-        if (!arrp) return false;
-        AstNodeDType* const elemDTypep = arrp->subDTypep();
-        if (!elemDTypep->basicp()) return false;
-        const int nElems = arrp->elementsConst();
-        const int elemW = elemDTypep->width();
-        if (nElems <= 0) return false;
-        if (nElems > DPIHOOK_MAX_ARRAY_ELEMS) {
+    static constexpr int DPIHOOK_MAX_AGG_LEAVES = 256;
+    bool expandUnpackedAggregateToMirror(AstVar* aggVarp) {
+        AstNodeDType* const dtp = aggVarp->dtypep()->skipRefp();
+        AstStructDType* const structp = VN_CAST(dtp, StructDType);
+        const bool isUnpacked = (structp && !structp->packed()) || VN_IS(dtp, UnpackArrayDType);
+        if (!isUnpacked) return false;
+        const int nLeaves = aggLeafCount(dtp);
+        if (nLeaves <= 0) return false;  // unsupported nested leaf (assoc/dynamic/class)
+        if (nLeaves > DPIHOOK_MAX_AGG_LEAVES) {
             aggVarp->fileline()->v3error(
                 "Target variable '"
-                << aggVarp->name() << "' in '" << m_currHier << "' is an unpacked array with "
-                << nElems << " elements, too large to hook as a whole (limit "
-                << DPIHOOK_MAX_ARRAY_ELEMS
-                << "); target individual elements with '" << aggVarp->name() << "[i]' instead");
+                << aggVarp->name() << "' in '" << m_currHier << "' flattens to " << nLeaves
+                << " leaves, too large to hook as a whole (limit " << DPIHOOK_MAX_AGG_LEAVES
+                << "); target individual elements instead");
             return true;
         }
-        FileLine* const fl = aggVarp->fileline();
+        const int totalW = aggBitWidth(dtp);
+        if (totalW <= 0) return false;
         std::vector<AstNodeExpr*> leaves;
         std::vector<int> widths;
-        for (int i = 0; i < nElems; ++i) {
-            AstArraySel* const selp = new AstArraySel{
-                fl, new AstVarRef{fl, aggVarp, VAccess::READ}, new AstConst{fl, (uint32_t)i}};
-            selp->dtypep(elemDTypep);
-            leaves.push_back(selp);
-            widths.push_back(elemW);
-        }
-        buildAggregateMirror(aggVarp, leaves, widths, nElems * elemW);
-        setAggregateEntry(aggVarp, [&](HookInsertEntry& e) {
-            e.aggIsArray = true;
-            e.arrayElems = nElems;
-            e.arrayElemW = elemW;
-        });
+        collectLeafAccesses(new AstVarRef{aggVarp->fileline(), aggVarp, VAccess::READ}, dtp, leaves,
+                            widths);
+        if (leaves.empty()) return false;
+        buildAggregateMirror(aggVarp, leaves, widths, totalW);
         return true;
-    }
-    bool expandUnpackedAggregateToMirror(AstVar* aggVarp) {
-        return expandUnpackedStructToMirror(aggVarp) || expandUnpackedArrayToMirror(aggVarp);
     }
     void visit(AstVar* nodep) override {
         if (nodep->isFuncLocal()) return;
@@ -1541,80 +1553,98 @@ class DPIOverrideBuilder final {
             = new AstCaseItem{m_targetModp->fileline(), cvtPackStringp, caseBodyp};
         casep->addItemsp(caseItemp);
     }
-    void redirectAggregateFields(AstVar* aggVarp) {
-        AstVar* const mirrorp = m_targetEntry.origVarp;
-        std::vector<AstStructSel*> reads;
-        m_targetModp->foreach([&](AstNode* nodep) {
-            AstStructSel* const selp = VN_CAST(nodep, StructSel);
-            if (!selp) return;
-            AstVarRef* const vrp = VN_CAST(selp->fromp(), VarRef);
-            if (!vrp || vrp->varp() != aggVarp || !vrp->access().isReadOnly()) return;
-            // Skip reads that drive the mirror itself (the pack-assign)
-            for (AstNode* ap = selp->backp(); ap; ap = ap->backp()) {
-                if (AstNodeAssign* const asgp = VN_CAST(ap, NodeAssign)) {
-                    AstVarRef* const lhsv = VN_CAST(asgp->lhsp(), VarRef);
-                    if (lhsv && lhsv->varp() == mirrorp) return;
-                    break;
-                }
-            }
-            reads.push_back(selp);
-        });
-        for (AstStructSel* const selp : reads) {
-            const MirrorLeaf* leafp = nullptr;
-            for (const MirrorLeaf& l : m_targetEntry.mirrorLeaves) {
-                if (l.name == selp->name()) leafp = &l;
-            }
-            if (!leafp) continue;
-            FileLine* const fl = selp->fileline();
-            AstSel* const slicep
-                = new AstSel{fl, new AstVarRef{fl, m_selResp, VAccess::READ},
-                             new AstConst{fl, static_cast<uint32_t>(leafp->lsb)}, leafp->width};
-            slicep->dtypep(selp->dtypep());
-            selp->replaceWith(slicep);
-            VL_DO_DANGLING(selp->deleteTree(), selp);
-        }
+    static AstNodeExpr* aggSelFromp(AstNode* nodep) {
+        if (AstStructSel* const sp = VN_CAST(nodep, StructSel)) return sp->fromp();
+        if (AstArraySel* const ap = VN_CAST(nodep, ArraySel)) return ap->fromp();
+        return nullptr;
     }
-    void redirectAggregateArray(AstVar* aggVarp) {
+    void redirectAggregateReads(AstVar* aggVarp) {
         AstVar* const mirrorp = m_targetEntry.origVarp;
-        const int nElems = m_targetEntry.arrayElems;
-        const int elemW = m_targetEntry.arrayElemW;
-        std::vector<AstArraySel*> reads;
+        const int totalW = mirrorp->width();
+        std::vector<AstNodeExpr*> targets;
         m_targetModp->foreach([&](AstNode* nodep) {
-            AstArraySel* const selp = VN_CAST(nodep, ArraySel);
-            if (!selp) return;
-            AstVarRef* const vrp = VN_CAST(selp->fromp(), VarRef);
+            AstVarRef* const vrp = VN_CAST(nodep, VarRef);
             if (!vrp || vrp->varp() != aggVarp || !vrp->access().isReadOnly()) return;
-            for (AstNode* ap = selp->backp(); ap; ap = ap->backp()) {
+            AstNode* cur = vrp;
+            while (AstNode* const p = cur->backp()) {
+                if (aggSelFromp(p) == cur) {
+                    cur = p;
+                } else {
+                    break;
+                }
+            }
+            for (AstNode* ap = cur->backp(); ap; ap = ap->backp()) {
                 if (AstNodeAssign* const asgp = VN_CAST(ap, NodeAssign)) {
                     AstVarRef* const lhsv = VN_CAST(asgp->lhsp(), VarRef);
                     if (lhsv && lhsv->varp() == mirrorp) return;
                     break;
                 }
             }
-            reads.push_back(selp);
+            AstNodeExpr* const outerp = VN_CAST(cur, NodeExpr);
+            if (!outerp || !aggIsLeafDType(outerp->dtypep())) return;
+            targets.push_back(outerp);
         });
+        for (AstNodeExpr* const outerp : targets) redirectOneLeafAccess(aggVarp, outerp, totalW);
+    }
+    void redirectOneLeafAccess(AstVar* aggVarp, AstNodeExpr* outerp, int totalW) {
+        FileLine* const fl = outerp->fileline();
+        std::vector<AstNode*> chain;
+        for (AstNode* cur = outerp; aggSelFromp(cur); cur = aggSelFromp(cur)) chain.push_back(cur);
+        std::reverse(chain.begin(), chain.end());
+        AstNodeDType* dtp = aggVarp->dtypep()->skipRefp();
         AstNodeDType* const idxDTypep
             = aggVarp->findLogicRangeDType(VNumRange{31, 0}, 32, VSigning::NOSIGN);
-        for (AstArraySel* const selp : reads) {
-            FileLine* const fl = selp->fileline();
-            AstNodeExpr* lsbp;
-            if (AstConst* const constp = VN_CAST(selp->bitp(), Const)) {
-                const int idx = static_cast<int>(constp->toUInt());
-                lsbp = new AstConst{fl, static_cast<uint32_t>((nElems - 1 - idx) * elemW)};
+        int constMsbOff = 0;
+        AstNodeExpr* dynp = nullptr;
+        for (AstNode* const stepp : chain) {
+            if (AstStructSel* const sp = VN_CAST(stepp, StructSel)) {
+                AstStructDType* const sdt = VN_CAST(dtp, StructDType);
+                AstNodeDType* memDtp = nullptr;
+                for (AstMemberDType* m = sdt->membersp(); m; m = VN_CAST(m->nextp(), MemberDType)) {
+                    if (m->name() == sp->name()) {
+                        memDtp = m->subDTypep();
+                        break;
+                    }
+                    constMsbOff += aggBitWidth(m->subDTypep());
+                }
+                dtp = memDtp->skipRefp();
             } else {
-                AstNodeExpr* const idxp = selp->bitp()->unlinkFrBack();
-                AstSub* const subp = new AstSub{fl, new AstConst{fl, static_cast<uint32_t>(nElems - 1)}, idxp};
-                subp->dtypep(idxDTypep);
-                AstMul* const mulp = new AstMul{fl, subp, new AstConst{fl, static_cast<uint32_t>(elemW)}};
-                mulp->dtypep(idxDTypep);
-                lsbp = mulp;
+                AstArraySel* const asp = VN_AS(stepp, ArraySel);
+                AstUnpackArrayDType* const adt = VN_CAST(dtp, UnpackArrayDType);
+                const int stride = aggBitWidth(adt->subDTypep());
+                if (AstConst* const c = VN_CAST(asp->bitp(), Const)) {
+                    constMsbOff += static_cast<int>(c->toUInt()) * stride;
+                } else {
+                    AstMul* const mulp = new AstMul{fl, asp->bitp()->unlinkFrBack(),
+                                                    new AstConst{fl, static_cast<uint32_t>(stride)}};
+                    mulp->dtypep(idxDTypep);
+                    if (!dynp) {
+                        dynp = mulp;
+                    } else {
+                        AstAdd* const addp = new AstAdd{fl, dynp, mulp};
+                        addp->dtypep(idxDTypep);
+                        dynp = addp;
+                    }
+                }
+                dtp = adt->subDTypep()->skipRefp();
             }
-            AstSel* const slicep
-                = new AstSel{fl, new AstVarRef{fl, m_selResp, VAccess::READ}, lsbp, elemW};
-            slicep->dtypep(selp->dtypep());
-            selp->replaceWith(slicep);
-            VL_DO_DANGLING(selp->deleteTree(), selp);
         }
+        const int leafW = outerp->dtypep()->skipRefp()->width();
+        const int constLsb = totalW - leafW - constMsbOff;
+        AstNodeExpr* lsbp;
+        if (!dynp) {
+            lsbp = new AstConst{fl, static_cast<uint32_t>(constLsb)};
+        } else {
+            AstSub* const subp
+                = new AstSub{fl, new AstConst{fl, static_cast<uint32_t>(constLsb)}, dynp};
+            subp->dtypep(idxDTypep);
+            lsbp = subp;
+        }
+        AstSel* const slicep
+            = new AstSel{fl, new AstVarRef{fl, m_selResp, VAccess::READ}, lsbp, leafW};
+        slicep->dtypep(outerp->dtypep());
+        outerp->replaceWith(slicep);
+        VL_DO_DANGLING(outerp->deleteTree(), outerp);
     }
     void insCondResVarp(AstVar* hookedVarp, AstVar* targetVarp) {
         m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
@@ -1624,11 +1654,7 @@ class DPIOverrideBuilder final {
         m_selResp->isDPIHookInserted(true);
         if (m_targetEntry.isAggregateMirror) {
             m_targetModp->addStmtsp(m_selResp);
-            if (m_targetEntry.aggIsArray) {
-                redirectAggregateArray(m_targetEntry.aggregateVarp);
-            } else {
-                redirectAggregateFields(m_targetEntry.aggregateVarp);
-            }
+            redirectAggregateReads(m_targetEntry.aggregateVarp);
             return;
         }
         if (m_targetEntry.elemIndex) {

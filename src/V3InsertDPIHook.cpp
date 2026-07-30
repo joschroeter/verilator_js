@@ -72,6 +72,9 @@ struct HookInsertEntry final {
     bool isAggregateMirror = false;
     AstVar* aggregateVarp = nullptr;  // The original unpacked aggregate var
     std::vector<MirrorLeaf> mirrorLeaves;  // Field layout within the mirror vector
+    bool aggIsArray = false;
+    int arrayElems = 0;
+    int arrayElemW = 0;
 };
 struct HookInsertTarget final {
     AstModule* origModp = nullptr;  // Original module pointer containing target var
@@ -450,24 +453,8 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         });
         return found;
     }
-    bool expandUnpackedStructToMirror(AstVar* aggVarp) {
-        AstNodeDType* const dtp = aggVarp->dtypep()->skipRefp();
-        AstStructDType* const structp = VN_CAST(dtp, StructDType);
-        if (!structp || structp->packed()) return false;  // only unpacked structs here
-        struct Leaf final {
-            string name;
-            int width;
-            AstNodeDType* dtypep;
-        };
-        std::vector<Leaf> leaves;
-        int totalW = 0;
-        for (AstMemberDType* memberp = structp->membersp(); memberp;
-             memberp = VN_CAST(memberp->nextp(), MemberDType)) {
-            if (!memberp->subDTypep()->basicp()) return false;
-            leaves.push_back({memberp->name(), memberp->width(), memberp->subDTypep()});
-            totalW += memberp->width();
-        }
-        if (leaves.empty()) return false;
+    AstVar* buildAggregateMirror(AstVar* aggVarp, const std::vector<AstNodeExpr*>& leaves,
+                                 const std::vector<int>& widths, int totalW) {
         FileLine* const fl = aggVarp->fileline();
         AstNodeDType* const mirrorDTypep
             = aggVarp->findLogicRangeDType(VNumRange{totalW - 1, 0}, totalW, VSigning::NOSIGN);
@@ -481,15 +468,12 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         // V3Width has already run and will not revisit these nodes
         AstNodeExpr* concatp = nullptr;
         int accW = 0;
-        for (auto it = leaves.rbegin(); it != leaves.rend(); ++it) {
-            AstStructSel* const selp
-                = new AstStructSel{fl, new AstVarRef{fl, aggVarp, VAccess::READ}, it->name};
-            selp->dtypep(it->dtypep);
-            accW += it->width;
+        for (size_t k = leaves.size(); k-- > 0;) {
+            accW += widths[k];
             if (!concatp) {
-                concatp = selp;
+                concatp = leaves[k];
             } else {
-                AstConcat* const cp = new AstConcat{fl, selp, concatp};
+                AstConcat* const cp = new AstConcat{fl, leaves[k], concatp};
                 cp->dtypep(
                     aggVarp->findLogicRangeDType(VNumRange{accW - 1, 0}, accW, VSigning::NOSIGN));
                 concatp = cp;
@@ -501,21 +485,12 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         // the element-view assign is emitted; a bare module-level AssignW is not
         // picked up by V3Active and would leave its VarRefs outside any function
         m_targetModp->addStmtsp(new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, packp});
-        // Retarget the hook entry to the mirror
         AstVar* const clonep = mirrorp->cloneTree(false);
         clonep->name("dpiHooked_" + mirrorp->name());
         clonep->origName("dpiHooked_" + mirrorp->name());
         clonep->isDPIHookInserted(true);
         clonep->varType(VVarType::VAR);
         clonep->trace(true);
-        // Field layout within the mirror: first-declared member is the MSB, so
-        // its LSB offset is (totalW - sum of widths up to and including it)
-        std::vector<MirrorLeaf> layout;
-        int consumed = 0;
-        for (const Leaf& leaf : leaves) {
-            consumed += leaf.width;
-            layout.push_back(MirrorLeaf{leaf.name, totalW - consumed, leaf.width});
-        }
         const auto it = m_insCfg.find(m_target);
         if (it != m_insCfg.end()) {
             for (auto& e : it->second.entries) {
@@ -525,11 +500,87 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
                     e.found = true;
                     e.isAggregateMirror = true;
                     e.aggregateVarp = aggVarp;
-                    e.mirrorLeaves = layout;
                 }
             }
         }
+        return mirrorp;
+    }
+    template <typename Fill>
+    void setAggregateEntry(AstVar* aggVarp, Fill fill) {
+        const auto it = m_insCfg.find(m_target);
+        if (it == m_insCfg.end()) return;
+        for (auto& e : it->second.entries) {
+            if (e.varTarget == aggVarp->name()) fill(e);
+        }
+    }
+    bool expandUnpackedStructToMirror(AstVar* aggVarp) {
+        AstStructDType* const structp = VN_CAST(aggVarp->dtypep()->skipRefp(), StructDType);
+        if (!structp || structp->packed()) return false;  // only unpacked structs here
+        FileLine* const fl = aggVarp->fileline();
+        std::vector<AstNodeExpr*> leaves;
+        std::vector<int> widths;
+        std::vector<MirrorLeaf> layout;
+        int totalW = 0;
+        for (AstMemberDType* memberp = structp->membersp(); memberp;
+             memberp = VN_CAST(memberp->nextp(), MemberDType)) {
+            if (!memberp->subDTypep()->basicp()) return false;
+            AstStructSel* const selp
+                = new AstStructSel{fl, new AstVarRef{fl, aggVarp, VAccess::READ}, memberp->name()};
+            selp->dtypep(memberp->subDTypep());
+            leaves.push_back(selp);
+            widths.push_back(memberp->width());
+            totalW += memberp->width();
+        }
+        if (leaves.empty()) return false;
+        int consumed = 0;
+        for (size_t i = 0; i < leaves.size(); ++i) {
+            consumed += widths[i];
+            layout.push_back(MirrorLeaf{VN_AS(leaves[i], StructSel)->name(), totalW - consumed,
+                                        widths[i]});
+        }
+        buildAggregateMirror(aggVarp, leaves, widths, totalW);
+        setAggregateEntry(aggVarp, [&](HookInsertEntry& e) { e.mirrorLeaves = layout; });
         return true;
+    }
+    static constexpr int DPIHOOK_MAX_ARRAY_ELEMS = 256;
+    bool expandUnpackedArrayToMirror(AstVar* aggVarp) {
+        AstUnpackArrayDType* const arrp
+            = VN_CAST(aggVarp->dtypep()->skipRefp(), UnpackArrayDType);
+        if (!arrp) return false;
+        AstNodeDType* const elemDTypep = arrp->subDTypep();
+        if (!elemDTypep->basicp()) return false;
+        const int nElems = arrp->elementsConst();
+        const int elemW = elemDTypep->width();
+        if (nElems <= 0) return false;
+        if (nElems > DPIHOOK_MAX_ARRAY_ELEMS) {
+            aggVarp->fileline()->v3error(
+                "Target variable '"
+                << aggVarp->name() << "' in '" << m_currHier << "' is an unpacked array with "
+                << nElems << " elements, too large to hook as a whole (limit "
+                << DPIHOOK_MAX_ARRAY_ELEMS
+                << "); target individual elements with '" << aggVarp->name() << "[i]' instead");
+            return true;
+        }
+        FileLine* const fl = aggVarp->fileline();
+        std::vector<AstNodeExpr*> leaves;
+        std::vector<int> widths;
+        for (int i = 0; i < nElems; ++i) {
+            AstArraySel* const selp = new AstArraySel{
+                fl, new AstVarRef{fl, aggVarp, VAccess::READ}, new AstConst{fl, (uint32_t)i}};
+            selp->dtypep(elemDTypep);
+            leaves.push_back(selp);
+            widths.push_back(elemW);
+        }
+        buildAggregateMirror(aggVarp, leaves, widths, nElems * elemW);
+        setAggregateEntry(aggVarp, [&](HookInsertEntry& e) {
+            e.aggIsArray = true;
+            e.arrayElems = nElems;
+            e.arrayElemW = elemW;
+        });
+        return true;
+    }
+    bool expandUnpackedAggregateToMirror(AstVar* aggVarp) {
+        return expandUnpackedStructToMirror(aggVarp) || expandUnpackedArrayToMirror(aggVarp);
     }
     void visit(AstVar* nodep) override {
         if (nodep->isFuncLocal()) return;
@@ -538,13 +589,17 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
             for (const auto& entry : target.entries) {
                 // Go over all var targets if in same module
                 if (nodep->name() == entry.varTarget) {
-                    // Check for if target var is supported
+                    AstNodeDType* const dtp = nodep->dtypep()->skipRefp();
+                    AstStructDType* const structp = VN_CAST(dtp, StructDType);
+                    const bool wholeAggregate
+                        = !entry.elemIndex
+                          && ((structp && !structp->packed()) || VN_IS(dtp, UnpackArrayDType));
+                    if (wholeAggregate && expandUnpackedAggregateToMirror(nodep)) {
+                        m_foundVarp = true;
+                        continue;
+                    }
                     AstBasicDType* basicp = nodep->basicp();
                     if (!basicp) {
-                        if (expandUnpackedStructToMirror(nodep)) {
-                            m_foundVarp = true;
-                            continue;
-                        }
                         nodep->fileline()->v3error(
                             "Target variable '"
                             << nodep->name() << "' in '" << m_currHier
@@ -1519,6 +1574,48 @@ class DPIOverrideBuilder final {
             VL_DO_DANGLING(selp->deleteTree(), selp);
         }
     }
+    void redirectAggregateArray(AstVar* aggVarp) {
+        AstVar* const mirrorp = m_targetEntry.origVarp;
+        const int nElems = m_targetEntry.arrayElems;
+        const int elemW = m_targetEntry.arrayElemW;
+        std::vector<AstArraySel*> reads;
+        m_targetModp->foreach([&](AstNode* nodep) {
+            AstArraySel* const selp = VN_CAST(nodep, ArraySel);
+            if (!selp) return;
+            AstVarRef* const vrp = VN_CAST(selp->fromp(), VarRef);
+            if (!vrp || vrp->varp() != aggVarp || !vrp->access().isReadOnly()) return;
+            for (AstNode* ap = selp->backp(); ap; ap = ap->backp()) {
+                if (AstNodeAssign* const asgp = VN_CAST(ap, NodeAssign)) {
+                    AstVarRef* const lhsv = VN_CAST(asgp->lhsp(), VarRef);
+                    if (lhsv && lhsv->varp() == mirrorp) return;
+                    break;
+                }
+            }
+            reads.push_back(selp);
+        });
+        AstNodeDType* const idxDTypep
+            = aggVarp->findLogicRangeDType(VNumRange{31, 0}, 32, VSigning::NOSIGN);
+        for (AstArraySel* const selp : reads) {
+            FileLine* const fl = selp->fileline();
+            AstNodeExpr* lsbp;
+            if (AstConst* const constp = VN_CAST(selp->bitp(), Const)) {
+                const int idx = static_cast<int>(constp->toUInt());
+                lsbp = new AstConst{fl, static_cast<uint32_t>((nElems - 1 - idx) * elemW)};
+            } else {
+                AstNodeExpr* const idxp = selp->bitp()->unlinkFrBack();
+                AstSub* const subp = new AstSub{fl, new AstConst{fl, static_cast<uint32_t>(nElems - 1)}, idxp};
+                subp->dtypep(idxDTypep);
+                AstMul* const mulp = new AstMul{fl, subp, new AstConst{fl, static_cast<uint32_t>(elemW)}};
+                mulp->dtypep(idxDTypep);
+                lsbp = mulp;
+            }
+            AstSel* const slicep
+                = new AstSel{fl, new AstVarRef{fl, m_selResp, VAccess::READ}, lsbp, elemW};
+            slicep->dtypep(selp->dtypep());
+            selp->replaceWith(slicep);
+            VL_DO_DANGLING(selp->deleteTree(), selp);
+        }
+    }
     void insCondResVarp(AstVar* hookedVarp, AstVar* targetVarp) {
         m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
                                targetVarp->name() + "_selRes", hookedVarp->dtypep()};
@@ -1527,7 +1624,11 @@ class DPIOverrideBuilder final {
         m_selResp->isDPIHookInserted(true);
         if (m_targetEntry.isAggregateMirror) {
             m_targetModp->addStmtsp(m_selResp);
-            redirectAggregateFields(m_targetEntry.aggregateVarp);
+            if (m_targetEntry.aggIsArray) {
+                redirectAggregateArray(m_targetEntry.aggregateVarp);
+            } else {
+                redirectAggregateFields(m_targetEntry.aggregateVarp);
+            }
             return;
         }
         if (m_targetEntry.elemIndex) {

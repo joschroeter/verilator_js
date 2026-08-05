@@ -236,67 +236,16 @@ public:
 
 //##################################################################################
 // Collect nodes and data from the AST for hook-insertion
-class HookInsTargetFndrVisitor final : public VNVisitor {
-    AstNetlist*
-        m_netlistp;  // Used for traversing AST from the beginning if the visitor is to deep
-    AstNodeModule* m_cellModp = nullptr;
-    AstModule* m_modp = nullptr;
-    AstModule* m_targetModp = nullptr;
-    bool m_assignNode = false;
-    bool m_error = false;
-    bool m_foundCellp = false;
-    bool m_foundVarp = false;
-    bool m_foundTopMod = true;  // If the visitor is in the first module node of the netlist
+class HookInsTargetFndr final {
+    AstNetlist* const m_netlistp;
     std::map<std::string, HookInsertTarget>& m_insCfg;
-    string m_currHier;
-    string m_target;
+    AstModule* m_targetModp = nullptr;
+    bool m_error = false;
+    bool m_foundVarp = false;
+    string m_currHier;  // Instance path resolved so far
+    string m_target;  // Current config key
 
     // METHODS
-    AstModule* findModp(const AstNetlist* netlistp, const AstModule* modp) {
-        for (AstNode* level1p = netlistp->op1p(); level1p; level1p = level1p->nextp()) {
-            AstModule* modulep = VN_CAST(level1p, Module);
-            if (modulep == modp) return modulep;
-        }
-        return nullptr;
-    }
-    bool targetHasFullName(const string& fullname, const string& target) {
-        return fullname == target;
-    }
-    bool targetHasPrefix(const string& prefix, const string& target) {
-        if (target.compare(0, prefix.size(), prefix) == 0
-            && (target.size() == prefix.size() || target[prefix.size()] == '.')) {
-            return true;
-        }
-        return false;
-    }
-    // Check if the given current Hierarchy matches the top module of the target (Pos: 0)
-    bool targetHasTop(const string& target) {
-        const auto parts = VString::split(target, '.');
-        return !parts.empty() && v3Global.rootp()->topModulep()->name() == parts.front();
-    }
-    // In the target string a part is considered the module/instance name seperated by a dot from
-    // the next one returns the amount of these parts to get a range for the selector input
-    int getTargetPartAmount(const string& target) {
-        int dots = 0;
-        for (char c : target) {
-            if (c == '.') { dots++; }
-        }
-        // Function uses the dots since a part is always seperated by a dot and adds 1 to address
-        // the last part. Also since there is always a variable at the end of a target string we
-        // can add 1 to the amount
-        return dots + 1;
-    }
-    // Split given string by '.' and return a vector of tokens
-    std::vector<std::string> split_by_dots(const std::string& str) {
-        std::vector<std::string> tokens;
-        size_t pos = 0, next;
-        while ((next = str.find('.', pos)) != std::string::npos) {
-            tokens.push_back(str.substr(pos, next - pos));
-            pos = next + 1;
-        }
-        tokens.push_back(str.substr(pos));
-        return tokens;
-    }
     // Config entry for the hierarchy currently being visited. Whenever m_targetModp
     // is set this is expected to hit, but look it up defensively: on a miss the
     // caller would otherwise dereference map::end().
@@ -304,26 +253,16 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         const auto it = m_insCfg.find(m_currHier);
         return it == m_insCfg.end() ? nullptr : &it->second;
     }
-    void iterateAssigns(AstNodeAssign* assignp, const string& target, const string& varName,
-                        bool isOutput) {
-        m_assignNode = true;
-        AstNodeExpr* exprp = isOutput ? assignp->lhsp() : assignp->rhsp();
-        // Match module-level signals only; a funcLocal of the same name (e.g. a
-        // package/function formal) is a different var and must not be collected.
-        if (AstVarRef* varrefp = VN_CAST(exprp, VarRef)) {
-            if (varrefp->varp()->name() == varName && !varrefp->varp()->isFuncLocal()) {
-                setAssigns(assignp, target, varName);
-            }
+    void collectAssignp(AstNodeAssign* assignp, const string& varName, bool isOutput) {
+        AstNodeExpr* const exprp = isOutput ? assignp->lhsp() : assignp->rhsp();
+        if (AstVarRef* const varrefp = VN_CAST(exprp, VarRef)) {
+            if (varrefp->varp()->name() == varName && !varrefp->varp()->isFuncLocal())
+                setAssigns(assignp, m_target, varName);
         } else {
-            for (AstVarRef* level1p = VN_CAST(exprp->op1p(), VarRef); level1p;
-                 level1p = VN_CAST(level1p->nextp(), VarRef)) {
-                if (level1p->varp()->name() == varName && !level1p->varp()->isFuncLocal()) {
-                    setAssigns(assignp, target, varName);
-                }
-            }
+            for (AstVarRef* varrefp = VN_CAST(exprp->op1p(), VarRef); varrefp; varrefp = VN_CAST(varrefp->nextp(), VarRef))
+                if (varrefp->varp()->name() == varName && !varrefp->varp()->isFuncLocal())
+                    setAssigns(assignp, m_target, varName);
         }
-        iterateChildren(assignp);
-        m_assignNode = false;
     }
     void setError(const string& target) {
         const auto it = m_insCfg.find(target);
@@ -331,7 +270,7 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     }
     void setOrigModule(AstModule* origModulep, const string& target) {
         const auto it = m_insCfg.find(target);
-        if (it != m_insCfg.end()) { it->second.origModp = origModulep; }
+        if (it != m_insCfg.end()) it->second.origModp = origModulep;
     }
     void setProcessed(const string& target) {
         const auto it = m_insCfg.find(target);
@@ -354,7 +293,6 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         const auto it = m_insCfg.find(target);
         if (it != m_insCfg.end()) {
             for (auto& entry : it->second.entries) {
-                AstVarRef* varrefp = VN_CAST(assignp->rhsp(), VarRef);
                 if (varName == entry.varTarget) {
                     entry.assignps.push_back(assignp);
                     return;
@@ -375,105 +313,113 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
     }
     void setModules(AstModule* modp, const string& target) {
         const auto it = m_insCfg.find(target);
-        if (it != m_insCfg.end()) { it->second.modps.push_back(modp); }
+        if (it != m_insCfg.end()) it->second.modps.push_back(modp);
     }
     void setCells(AstCell* cellp, const string& target) {
         const auto it = m_insCfg.find(target);
-        if (it != m_insCfg.end()) { it->second.cellps.push_back(cellp); }
+        if (it != m_insCfg.end()) it->second.cellps.push_back(cellp);
     }
-    // VISITORS
-    void visit(AstModule* nodep) override {
-        if (m_foundTopMod) {
-            bool foundModp = false;
-            if (targetHasTop(m_target)) {
-                foundModp = true;
-                m_modp = nodep;
-                m_currHier = nodep->name();
-                if (targetHasFullName(m_currHier, m_target)) {
-                    m_targetModp = nodep;
-                    m_foundCellp = true;  // no instance hop -> suppress the "instance" error
-                    setOrigModule(nodep, m_target);
-                    iterateChildren(nodep);  // Continue to var node
+    // NAVIGATION AND COLLECTION
+    static AstCell* targetChildCell(AstNodeModule* modp, const string& name) {
+        for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp())
+            if (AstCell* const cellp = VN_CAST(stmtp, Cell))
+                if (cellp->name() == name) return cellp;
+        return nullptr;
+    }
+    static bool partOfAssign(const AstNode* nodep) {
+        for (const AstNode* backp = nodep->backp(); backp; backp = backp->backp())
+            if (VN_IS(backp, NodeAssign)) return true;
+        return false;
+    }
+    void navigateToTarget(const string& prefix) {
+        const std::deque<string> targetParts = VString::split(prefix, '.');
+        AstNodeModule* const topp = m_netlistp->topModulep();
+        if (targetParts.empty() || targetParts.front() != topp->name()) {
+            topp->fileline()->v3error("DPI-hook insertion of target '"
+                                      << prefix
+                                      << "' could not find initial 'module' in "
+                                         "'topModule.instance.__'");
+            m_error = true;
+            return;
+        }
+        AstNodeModule* currModp = topp;
+        m_currHier = targetParts.front();
+        for (size_t i = 1; i < targetParts.size(); ++i) {
+            AstCell* const targetCellp = targetChildCell(currModp, targetParts[i]);
+            if (!targetCellp || !targetCellp->modp()) {
+                // Distinguish a first-hop miss
+                if (i == 1) {
+                    currModp->fileline()->v3error("DPI-hook insertion of target '"
+                                                   << prefix
+                                                   << "' could not find initial 'instance' in "
+                                                      "'topModule.instance.__'");
                 } else {
-                    // Manually iterating over the cells so we can get the modp of the in the
-                    // target string defined cell. Cell visitor is then used with this m_cellModp
-                    // set to find all cells that refere to this Module
-                    for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
-                        if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
-                            if (targetHasPrefix(m_currHier + "." + cellLv2p->name(), m_target)) {
-                                m_cellModp = cellLv2p->modp();
-                                m_foundCellp = true;
-                                m_currHier = m_currHier + "." + cellLv2p->name();
-                                break;
-                            }
-                        }
-                    }
-                    setModules(nodep, m_target);
-                    iterateChildren(nodep);  // Continue to Cell/Var nodes
+                    currModp->fileline()->v3error("DPI-hook insertion of target '"
+                                                   << prefix
+                                                   << "' could not find 'instance' in "
+                                                      "'__.instance.__'");
                 }
-                m_foundTopMod = false;
-            } else if (!foundModp && nodep->name() == "@CONST-POOL@") {
-                nodep->fileline()->v3error("DPI-hook insertion of target '"
-                                           << m_target
-                                           << "' could not find initial 'module' in "
-                                              "'topModule.instance.__'");
-                m_foundTopMod = false;
                 m_error = true;
+                return;
             }
-        } else if (m_cellModp  // Find module pointed to by the cell from cell visitor
-                   && (nodep = findModp(m_netlistp, VN_CAST(m_cellModp, Module)))) {
-            if (targetHasFullName(m_currHier, m_target)) {
-                AstModule* insModp = nullptr;
-                m_targetModp = nodep;
-                m_cellModp = nullptr;
-                setOrigModule(nodep, m_target);
-                iterateChildren(nodep);  // Continue to var node
-            } else if (targetHasPrefix(m_currHier, m_target)) {
-                m_foundCellp = false;
-                m_cellModp = nullptr;
-                m_modp = nodep;
-                for (AstNode* level2p = nodep->op2p(); level2p; level2p = level2p->nextp()) {
-                    if (AstCell* cellLv2p = VN_CAST(level2p, Cell)) {
-                        if (targetHasPrefix(m_currHier + "." + cellLv2p->name(), m_target)) {
-                            m_cellModp = cellLv2p->modp();
-                            m_foundCellp = true;
-                            m_currHier = m_currHier + "." + cellLv2p->name();
-                            break;
-                        }
-                    }
-                }
-                setModules(nodep, m_target);
-                iterateChildren(nodep);  // Continue to cell
-            }
-        } else if (!m_error && !m_foundCellp) {
-            nodep->fileline()->v3error("DPI-hook insertion of target '"
-                                       << m_target
-                                       << "' could not find 'instance' in "
-                                          "'__.instance.__'");
-        } else if (!m_error && !m_foundVarp) {
-            nodep->fileline()->v3error("DPI-hook insertion of target '"
-                                       << m_target
-                                       << "' could not find 'var' in "
-                                          "'__.instance.var'");
+            AstNodeModule* const childModp = targetCellp->modp();
+            if (AstModule* const asModp = VN_CAST(currModp, Module)) setModules(asModp, prefix);
+            for (AstNode* stmtp = currModp->stmtsp(); stmtp; stmtp = stmtp->nextp())
+                if (AstCell* const cellp = VN_CAST(stmtp, Cell))
+                    if (cellp->modp() == childModp) setCells(cellp, prefix);
+            m_currHier += "." + targetParts[i];
+            currModp = childModp;
         }
+        AstModule* const origModp = VN_CAST(currModp, Module);
+        if (!origModp) {
+            currModp->fileline()->v3error("DPI-hook insertion of target '"
+                                         << prefix
+                                         << "' resolves to a non-module container, which is not"
+                                            " supported");
+            m_error = true;
+            return;
+        }
+        setOrigModule(origModp, prefix);
+        collectTargetsInModule(origModp);
     }
-    void visit(AstCell* nodep) override {
-        if (m_foundTopMod) {
-            if (nodep->modp() == m_cellModp) {
-                setCells(nodep, m_target);
-                iterateChildren(nodep);
-            } else if (!m_foundCellp && !VN_IS(nodep->nextp(), Cell)) {
-                nodep->fileline()->v3error("DPI-hook insertion of target '"
-                                           << m_target
-                                           << "' could not find initial 'instance' in "
-                                              "'topModule.instance.__'");
-                m_error = true;
-                m_foundTopMod = false;
+    void collectTargetsInModule(AstModule* origModp) {
+        m_targetModp = origModp;
+        const HookInsertTarget* const targetp = currTargetp();
+        if (!targetp) return;
+        std::vector<AstVar*> targetVarps;
+        origModp->foreach([&](AstNode* np) {
+            AstVar* const varp = VN_CAST(np, Var);
+            if (!varp || varp->isFuncLocal()) return;
+            for (const auto& entry : targetp->entries)
+                if (varp->name() == entry.varTarget) {
+                    targetVarps.push_back(varp);
+                    break;
+                }
+        });
+        for (AstVar* const varp : targetVarps)
+            for (const auto& entry : targetp->entries)
+                if (varp->name() == entry.varTarget) processTargetVar(varp, entry);
+        origModp->foreach([&](AstNode* np) {
+            AstNodeAssign* const assignp = VN_CAST(np, NodeAssign);
+            if (!assignp) return;
+            for (const auto& entry : targetp->entries)
+                if (entry.origVarp && !entry.isAggregateMirror)
+                    collectAssignp(assignp, entry.varTarget, entry.origVarp->isOutputish());
+        });
+        origModp->foreach([&](AstNode* np) {
+            AstVarRef* const vrp = VN_CAST(np, VarRef);
+            if (!vrp || vrp->varp()->isFuncLocal() || vrp->access() != VAccess::READ) return;
+            if (partOfAssign(vrp)) return;
+            for (const auto& entry : targetp->entries) {
+                if (entry.isAggregateMirror) continue;
+                if (vrp->varp()->name() == entry.varTarget)
+                    setVarRefs(vrp, m_target, entry.varTarget);
             }
-        } else if (m_modp && nodep->modp() == m_cellModp) {
-            setCells(nodep, m_target);
-        }
-        iterateChildren(nodep);
+        });
+        if (!m_foundVarp)
+            origModp->fileline()->v3error("DPI-hook insertion of target '"
+                                          << m_target
+                                          << "' could not find 'var' in '__.instance.var'");
     }
     bool hasArraySelUse(AstVar* varp) const {
         if (!m_targetModp) return false;
@@ -594,161 +540,86 @@ class HookInsTargetFndrVisitor final : public VNVisitor {
         buildAggregateMirror(aggVarp, leaves, widths, totalW);
         return true;
     }
-    void visit(AstVar* nodep) override {
-        if (nodep->isFuncLocal()) return;
-        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
-            const HookInsertTarget& target = *targetp;
-            for (const auto& entry : target.entries) {
-                // Go over all var targets if in same module
-                if (nodep->name() == entry.varTarget) {
-                    AstNodeDType* const dtp = nodep->dtypep()->skipRefp();
-                    AstStructDType* const structp = VN_CAST(dtp, StructDType);
-                    const bool wholeAggregate
-                        = !entry.elemIndex
-                          && ((structp && !structp->packed()) || VN_IS(dtp, UnpackArrayDType));
-                    if (wholeAggregate && expandUnpackedAggregateToMirror(nodep)) {
-                        m_foundVarp = true;
-                        continue;
-                    }
-                    AstBasicDType* basicp = nodep->basicp();
-                    if (!basicp) {
-                        nodep->fileline()->v3error(
-                            "Target variable '"
-                            << nodep->name() << "' in '" << m_currHier
-                            << "' has an unpacked or aggregate type that cannot be hooked"
-                               " directly; only packed (bit-vector) types are supported");
-                        return;
-                    }
-                    const bool literal = basicp->isLiteralType();
-                    const bool implicit = basicp->implicit();
-                    // Total bit width of the target. basicp()->rangep() is null for some packed
-                    // vectors (e.g. reg [127:0]), which used to leave width at 0 and silently let
-                    // >64-bit targets through; use the resolved var width instead.
-                    const bool isUnsupportedType = !literal && !implicit;
-                    if (isUnsupportedType) {
-                        nodep->fileline()->v3error("Target variable '"
-                                                   << nodep->name() << "' in '" << m_currHier
-                                                   << "' must be a supported type");
-                        return;
-                    }
-                    // Overriding a net the design clocks off breaks the clock
-                    // domains derived from it later; reject it here with a clear
-                    // message rather than failing deep in V3Scope.
-                    if (ClockUseVisitor{v3Global.rootp(), nodep}.isClock()) {
-                        nodep->fileline()->v3error(
-                            "Target variable '"
-                            << nodep->name() << "' in '" << m_currHier
-                            << "' is used as a clock or asynchronous reset (it appears in an"
-                               " edge-sensitive sensitivity list); hooking such a signal is not"
-                               " supported");
-                        return;
-                    }
-                    AstUnpackArrayDType* const arrayp
-                        = VN_CAST(nodep->dtypep()->skipRefp(), UnpackArrayDType);
-                    if (entry.elemIndex && !arrayp && !hasArraySelUse(nodep)) continue;
-                    if (entry.elemIndex && arrayp
-                        && entry.elemIndex.value() >= static_cast<uint32_t>(arrayp->elementsConst())) {
-                        nodep->fileline()->v3error("Element index " << entry.elemIndex.value()
-                                                   << " is out of range for target variable '"
-                                                   << nodep->name() << "' in '" << m_currHier
-                                                   << "' (" << arrayp->elementsConst()
-                                                   << " elements)");
-                        return;
-                    }
-                    AstVar* varp = nodep->cloneTree(false);
-                    if (entry.elemIndex && arrayp) varp->dtypep(arrayp->subDTypep());
-                    varp->name("dpiHooked_" + nodep->name());
-                    varp->origName("dpiHooked_" + nodep->name());
-                    varp->isDPIHookInserted(true);
-                    varp->varType(VVarType::VAR);
-                    varp->trace(true);
-                    setVar(nodep, varp, m_target);
-                    m_foundVarp = true;
-                }
-            }
+    void processTargetVar(AstVar* nodep, const HookInsertEntry& entry) {
+        AstNodeDType* const dtp = nodep->dtypep()->skipRefp();
+        AstStructDType* const structp = VN_CAST(dtp, StructDType);
+        const bool wholeAggregate
+            = !entry.elemIndex
+              && ((structp && !structp->packed()) || VN_IS(dtp, UnpackArrayDType));
+        if (wholeAggregate && expandUnpackedAggregateToMirror(nodep)) {
+            m_foundVarp = true;
+            return;
         }
-    };
-    // Collect assigns if needed
-    void visit(AstAssignW* nodep) override {
-        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
-            for (const auto& entry : targetp->entries) {
-                if (entry.origVarp && !entry.isAggregateMirror)
-                    iterateAssigns(nodep, m_target, entry.varTarget,
-                                   entry.origVarp->isOutputish());
-            }
+        AstBasicDType* const basicp = nodep->basicp();
+        if (!basicp) {
+            nodep->fileline()->v3error(
+                "Target variable '"
+                << nodep->name() << "' in '" << m_currHier
+                << "' has an unpacked or aggregate type that cannot be hooked"
+                   " directly; only packed (bit-vector) types are supported");
+            return;
         }
-    }  // Collect assigns if needed
-    void visit(AstAssign* nodep) override {
-        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
-            for (const auto& entry : targetp->entries) {
-                if (entry.origVarp && !entry.isAggregateMirror)
-                    iterateAssigns(nodep, m_target, entry.varTarget,
-                                   entry.origVarp->isOutputish());
-            }
+        const bool literal = basicp->isLiteralType();
+        const bool implicit = basicp->implicit();
+        const bool isUnsupportedType = !literal && !implicit;
+        if (isUnsupportedType) {
+            nodep->fileline()->v3error("Target variable '"
+                                       << nodep->name() << "' in '" << m_currHier
+                                       << "' must be a supported type");
+            return;
         }
-    }  // Collect assigns if needed
-    void visit(AstAssignDly* nodep) override {
-        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
-            for (const auto& entry : targetp->entries) {
-                if (entry.origVarp && !entry.isAggregateMirror)
-                    iterateAssigns(nodep, m_target, entry.varTarget,
-                                   entry.origVarp->isOutputish());
-            }
+        if (ClockUseVisitor{m_netlistp, nodep}.isClock()) {
+            nodep->fileline()->v3error(
+                "Target variable '"
+                << nodep->name() << "' in '" << m_currHier
+                << "' is used as a clock or asynchronous reset (it appears in an"
+                   " edge-sensitive sensitivity list); hooking such a signal is not"
+                   " supported");
+            return;
         }
-    }  // Collect assigns if needed
-    void visit(AstAssignForce* nodep) override {
-        if (const HookInsertTarget* const targetp = m_targetModp ? currTargetp() : nullptr) {
-            for (const auto& entry : targetp->entries) {
-                if (entry.origVarp && !entry.isAggregateMirror)
-                    iterateAssigns(nodep, m_target, entry.varTarget,
-                                   entry.origVarp->isOutputish());
-            }
+        AstUnpackArrayDType* const arrayp = VN_CAST(nodep->dtypep()->skipRefp(), UnpackArrayDType);
+        if (entry.elemIndex && !arrayp && !hasArraySelUse(nodep)) return;
+        if (entry.elemIndex && arrayp
+            && entry.elemIndex.value() >= static_cast<uint32_t>(arrayp->elementsConst())) {
+            nodep->fileline()->v3error("Element index " << entry.elemIndex.value()
+                                       << " is out of range for target variable '" << nodep->name()
+                                       << "' in '" << m_currHier << "' (" << arrayp->elementsConst()
+                                       << " elements)");
+            return;
         }
-    }  // Collect VarRefs if needed
-    void visit(AstVarRef* nodep) override {
-        const HookInsertTarget* const targetp
-            = (m_targetModp && !m_assignNode) ? currTargetp() : nullptr;
-        if (targetp && !nodep->varp()->isFuncLocal()) {
-            for (const auto& entry : targetp->entries) {
-                if (entry.isAggregateMirror) continue;
-                if (nodep->varp()->name() == entry.varTarget && nodep->access() == VAccess::READ) {
-                    setVarRefs(nodep, m_target, entry.varTarget);
-                }
-            }
-        }
-        iterateChildren(nodep);
+        AstVar* const varp = nodep->cloneTree(false);
+        if (entry.elemIndex && arrayp) varp->dtypep(arrayp->subDTypep());
+        varp->name("dpiHooked_" + nodep->name());
+        varp->origName("dpiHooked_" + nodep->name());
+        varp->isDPIHookInserted(true);
+        varp->varType(VVarType::VAR);
+        varp->trace(true);
+        setVar(nodep, varp, m_target);
+        m_foundVarp = true;
     }
-
-    void visit(AstNode* nodep) override { iterateChildren(nodep); }
-
 public:
     // CONSTRUCTOR
     //-------------------------------------------------------------------------------
-    explicit HookInsTargetFndrVisitor(AstNetlist* nodep,
-                                      std::map<std::string, HookInsertTarget>& insCfg)
+    explicit HookInsTargetFndr(AstNetlist* nodep,
+                               std::map<std::string, HookInsertTarget>& insCfg)
         : m_netlistp{nodep}
         , m_insCfg{insCfg} {
         for (const auto& pair : m_insCfg) {
-            VL_RESTORER(m_foundTopMod);
-            VL_RESTORER(m_foundCellp);
-            VL_RESTORER(m_foundVarp);
-            VL_RESTORER(m_error);
-            VL_RESTORER(m_targetModp);
-            VL_RESTORER(m_modp);
-            VL_RESTORER(m_assignNode);
-            VL_RESTORER(m_cellModp);
-            // Set initial flag values
+            // Reset the per-target state
             m_target = pair.first;
             m_currHier = "";
-            iterate(nodep);
+            m_targetModp = nullptr;
+            m_foundVarp = false;
+            m_error = false;
+            navigateToTarget(m_target);
             if (!m_error) {
                 setProcessed(m_target);
             } else {
                 setError(m_target);
             }
         }
-    };
-    ~HookInsTargetFndrVisitor() override = default;
+    }
+    ~HookInsTargetFndr() = default;
 };
 
 //##################################################################################
@@ -1988,7 +1859,7 @@ void V3InsertDPIHook::hookInsert(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     std::map<std::string, HookInsertTarget> insCfg = buildWorkingCfg();
     // Finder phase: resolve the AST pointers for each configured target.
-    { HookInsTargetFndrVisitor{nodep, insCfg}; }
+    { HookInsTargetFndr{nodep, insCfg}; }
     V3Global::dumpCheckGlobalTree("hookInsertFinder", 0, dumpTreeEitherLevel() >= 3);
     // Insertion phase: mutate the AST using the resolved pointers.
     DPIHookInserter inserter{nodep, insCfg};

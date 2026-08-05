@@ -1,12 +1,15 @@
-%Error: DPI-hook insertion of target 'top.a1.b1' could not find initial 'module' in 'topModule.instance.__'
+%Error: t/t_ins_dpi_hook.v:8:8: DPI-hook insertion of target 'top.a1.b1' could not find initial 'module' in 'topModule.instance.__'
+    8 | module top_module;
+      |        ^~~~~~~~~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: DPI-hook insertion of target 'top_module.a1.b1' could not find 'var' in '__.instance.var'
-%Error: t/t_ins_dpi_hook.v:70:8: DPI-hook insertion of target 'top_module.a1.b3' could not find 'instance' in '__.instance.__'
+%Error: t/t_ins_dpi_hook.v:70:8: DPI-hook insertion of target 'top_module.a1.b1' could not find 'var' in '__.instance.var'
    70 | module module_b (
       |        ^~~~~~~~
-%Error: DPI-hook insertion of target 'top_module.a1.b3' could not find 'instance' in '__.instance.__'
-%Error: t/t_ins_dpi_hook.v:15:12: DPI-hook insertion of target 'top_module.a3.b1' could not find initial 'instance' in 'topModule.instance.__'
-   15 |   module_a a2 (.in1(in1b), .in2(in2b), .out(outb));
-      |            ^~
+%Error: t/t_ins_dpi_hook.v:62:8: DPI-hook insertion of target 'top_module.a1.b3' could not find 'instance' in '__.instance.__'
+   62 | module module_a(
+      |        ^~~~~~~~
+%Error: t/t_ins_dpi_hook.v:8:8: DPI-hook insertion of target 'top_module.a3.b1' could not find initial 'instance' in 'topModule.instance.__'
+    8 | module top_module;
+      |        ^~~~~~~~~~
 %Error: Incomplete hook-insertion configuration for target 'top_module.a1.b1.clk'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
 %Error: Exiting due to

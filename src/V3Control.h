@@ -26,15 +26,31 @@
 #include "V3Mutex.h"
 
 #include <optional>
+#include <string>
+#include <vector>
 
 //######################################################################
 // Declarative hook-insertion configuration parsed from the .vlt file.
+
+// One step of an access path into a target variable: either an unpacked-array
+// element index ("[i]") or a struct/union member name (".name"); A plain scalar
+// target has an empty path; "mem[i]" is a single index step
+struct AccessStep final {
+    bool isIndex = false;  // true: array index; false: member name
+    uint32_t index = 0;  // Array element index, when isIndex
+    std::string member;  // Member name, when !isIndex
+    bool operator==(const AccessStep& other) const {
+        return isIndex == other.isIndex && index == other.index && member == other.member;
+    }
+};
+using AccessPath = std::vector<AccessStep>;
+
 struct HookInsCfgEntry final {
     std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
-    std::optional<uint32_t> elemIndex;  // Unpacked-array element, from a "name[i]" target
+    AccessPath accessPath;  // Member/index steps into the target var ("a.b[i]"); empty for scalars
 };
 
 class V3Control final {

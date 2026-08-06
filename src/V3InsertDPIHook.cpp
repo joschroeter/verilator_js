@@ -101,7 +101,7 @@ struct HookInsertEntry final {
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
-    std::optional<uint32_t> elemIndex;  // Unpacked-array element, from a "name[i]" target
+    AccessPath accessPath;  // Member/index steps into the target var ("a.b[i]"); empty for scalars
     AstVar* origVarp = nullptr;  // Original variable pointer
     AstVar* dpiHookedVarp = nullptr;  // Cloned variable pointer from original with edits
     std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
@@ -110,6 +110,25 @@ struct HookInsertEntry final {
     bool done = false;  // Whether the hook insertion has been completed for a signal
     bool isAggregateMirror = false;
     AstVar* aggregateVarp = nullptr;  // The original unpacked aggregate var
+    std::optional<uint32_t> elemIndex() const {
+        if (accessPath.size() == 1 && accessPath.front().isIndex) return accessPath.front().index;
+        return std::nullopt;
+    }
+    // Whether the access path steps into a struct/union member (as opposed to only
+    // an unpacked-array element index)
+    bool hasMemberStep() const {
+        for (const AccessStep& step : accessPath)
+            if (!step.isIndex) return true;
+        return false;
+    }
+    // A name-safe suffix encoding the access path ("_a", "_arr_2_x"), used to keep the
+    // per-leaf hook var names unique when several members of one struct var are hooked
+    std::string accessPathSuffix() const {
+        std::string s;
+        for (const AccessStep& step : accessPath)
+            s += step.isIndex ? ("_" + std::to_string(step.index)) : ("_" + step.member);
+        return s;
+    }
 };
 struct HookInsertTarget final {
     AstModule* origModp = nullptr;  // Original module pointer containing target var
@@ -246,11 +265,12 @@ class HookInsTargetFndr final {
     string m_target;  // Current config key
 
     // METHODS
-    // Config entry for the hierarchy currently being visited. Whenever m_targetModp
-    // is set this is expected to hit, but look it up defensively: on a miss the
+    // Config entry for the target currently being resolved, keyed by the config
+    // key (m_target). For a member path the resolved instance hierarchy (m_currHier)
+    // is shorter than the key, so look up by the key. Defensive on a miss: the
     // caller would otherwise dereference map::end().
     const HookInsertTarget* currTargetp() {
-        const auto it = m_insCfg.find(m_currHier);
+        const auto it = m_insCfg.find(m_target);
         return it == m_insCfg.end() ? nullptr : &it->second;
     }
     void collectAssignp(AstNodeAssign* assignp, const string& varName, bool isOutput) {
@@ -277,17 +297,13 @@ class HookInsTargetFndr final {
         const auto it = m_insCfg.find(target);
         if (it != m_insCfg.end()) it->second.processed = true;
     }
-    void setVar(AstVar* varp, AstVar* insVarp, const string& target) {
+    void setVarAt(size_t entryIdx, AstVar* varp, AstVar* insVarp, const string& target) {
         const auto it = m_insCfg.find(target);
-        if (it != m_insCfg.end()) {
-            for (auto& entry : it->second.entries) {
-                if (entry.varTarget == varp->name()) {
-                    entry.origVarp = varp;
-                    entry.dpiHookedVarp = insVarp;
-                    entry.found = true;
-                    return;
-                }
-            }
+        if (it != m_insCfg.end() && entryIdx < it->second.entries.size()) {
+            HookInsertEntry& entry = it->second.entries[entryIdx];
+            entry.origVarp = varp;
+            entry.dpiHookedVarp = insVarp;
+            entry.found = true;
         }
     }
     void setAssigns(AstNodeAssign* assignp, const string& target, const string& varName) {
@@ -327,6 +343,20 @@ class HookInsTargetFndr final {
                 if (cellp->name() == name) return cellp;
         return nullptr;
     }
+    static AstVar* targetChildVar(AstNodeModule* modp, const string& name) {
+        for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp())
+            if (AstVar* const varp = VN_CAST(stmtp, Var))
+                if (varp->name() == name) return varp;
+        return nullptr;
+    }
+    // Split a path component into its name and optional array index: "arr[2]" ->
+    // {"arr", 2}, "u" -> {"u", nullopt}
+    static std::pair<string, std::optional<uint32_t>> parseComponent(const string& part) {
+        const auto open = part.find('[');
+        if (open == string::npos || part.back() != ']') return {part, std::nullopt};
+        const string index = part.substr(open + 1, part.size() - open - 2);
+        return {part.substr(0, open), static_cast<uint32_t>(std::stoul(index))};
+    }
     static bool partOfAssign(const AstNode* nodep) {
         for (const AstNode* backp = nodep->backp(); backp; backp = backp->backp())
             if (VN_IS(backp, NodeAssign)) return true;
@@ -346,30 +376,40 @@ class HookInsTargetFndr final {
         AstNodeModule* currModp = topp;
         m_currHier = targetParts.front();
         for (size_t i = 1; i < targetParts.size(); ++i) {
-            AstCell* const targetCellp = targetChildCell(currModp, targetParts[i]);
-            if (!targetCellp || !targetCellp->modp()) {
-                // Distinguish a first-hop miss
-                if (i == 1) {
-                    currModp->fileline()->v3error("DPI-hook insertion of target '"
-                                                  << prefix
-                                                  << "' could not find initial 'instance' in "
-                                                     "'topModule.instance.__'");
-                } else {
-                    currModp->fileline()->v3error("DPI-hook insertion of target '"
-                                                  << prefix
-                                                  << "' could not find 'instance' in "
-                                                     "'__.instance.__'");
-                }
-                m_error = true;
+            const auto [partName, partIdx] = parseComponent(targetParts[i]);
+            // Since cell hops into the child module, an indexed component ("u[i]") is
+            // never a cell here
+            AstCell* const targetCellp = partIdx ? nullptr : targetChildCell(currModp, partName);
+            if (targetCellp && targetCellp->modp()) {
+                AstNodeModule* const childModp = targetCellp->modp();
+                if (AstModule* const asModp = VN_CAST(currModp, Module)) setModules(asModp, prefix);
+                for (AstNode* stmtp = currModp->stmtsp(); stmtp; stmtp = stmtp->nextp())
+                    if (AstCell* const cellp = VN_CAST(stmtp, Cell))
+                        if (cellp->modp() == childModp) setCells(cellp, prefix);
+                m_currHier += "." + targetParts[i];
+                currModp = childModp;
+                continue;
+            }
+            // Not a cell: if it names a variable, this is the instance/var boundary
+            // and the remaining components are a member/index access path into it
+            if (targetChildVar(currModp, partName)) {
+                resolveMemberPath(currModp, targetParts, i);
                 return;
             }
-            AstNodeModule* const childModp = targetCellp->modp();
-            if (AstModule* const asModp = VN_CAST(currModp, Module)) setModules(asModp, prefix);
-            for (AstNode* stmtp = currModp->stmtsp(); stmtp; stmtp = stmtp->nextp())
-                if (AstCell* const cellp = VN_CAST(stmtp, Cell))
-                    if (cellp->modp() == childModp) setCells(cellp, prefix);
-            m_currHier += "." + targetParts[i];
-            currModp = childModp;
+            // Neither a cell nor a var -> missing instance
+            if (i == 1) {
+                currModp->fileline()->v3error("DPI-hook insertion of target '"
+                                              << prefix
+                                              << "' could not find initial 'instance' in "
+                                                 "'topModule.instance.__'");
+            } else {
+                currModp->fileline()->v3error("DPI-hook insertion of target '"
+                                              << prefix
+                                              << "' could not find 'instance' in "
+                                                 "'__.instance.__'");
+            }
+            m_error = true;
+            return;
         }
         AstModule* const origModp = VN_CAST(currModp, Module);
         if (!origModp) {
@@ -381,6 +421,37 @@ class HookInsTargetFndr final {
             return;
         }
         setOrigModule(origModp, prefix);
+        collectTargetsInModule(origModp);
+    }
+    void resolveMemberPath(AstNodeModule* modp, const std::deque<string>& parts, size_t k) {
+        AstModule* const origModp = VN_CAST(modp, Module);
+        if (!origModp) {
+            modp->fileline()->v3error("DPI-hook insertion of target '"
+                                      << m_target
+                                      << "' resolves to a non-module container, which is not"
+                                         " supported");
+            m_error = true;
+            return;
+        }
+        const auto [varName, varIdx] = parseComponent(parts[k]);
+        AccessPath prefixSteps;
+        if (varIdx) prefixSteps.push_back(AccessStep{true, varIdx.value(), ""});
+        for (size_t j = k + 1; j < parts.size(); ++j) {
+            const auto [memberName, memberIdx] = parseComponent(parts[j]);
+            prefixSteps.push_back(AccessStep{false, 0, memberName});
+            if (memberIdx) prefixSteps.push_back(AccessStep{true, memberIdx.value(), ""});
+        }
+        const auto it = m_insCfg.find(m_target);
+        if (it != m_insCfg.end()) {
+            for (auto& entry : it->second.entries) {
+                AccessPath full = prefixSteps;
+                full.push_back(AccessStep{false, 0, entry.varTarget});  // the original last part
+                for (const AccessStep& step : entry.accessPath) full.push_back(step);
+                entry.varTarget = varName;
+                entry.accessPath = std::move(full);
+            }
+        }
+        setOrigModule(origModp, m_target);
         collectTargetsInModule(origModp);
     }
     void collectTargetsInModule(AstModule* origModp) {
@@ -398,13 +469,14 @@ class HookInsTargetFndr final {
                 }
         });
         for (AstVar* const varp : targetVarps)
-            for (const auto& entry : targetp->entries)
-                if (varp->name() == entry.varTarget) processTargetVar(varp, entry);
+            for (size_t ei = 0; ei < targetp->entries.size(); ++ei)
+                if (varp->name() == targetp->entries[ei].varTarget)
+                    processTargetVar(varp, targetp->entries[ei], ei);
         origModp->foreach([&](AstNode* np) {
             AstNodeAssign* const assignp = VN_CAST(np, NodeAssign);
             if (!assignp) return;
             for (const auto& entry : targetp->entries)
-                if (entry.origVarp && !entry.isAggregateMirror)
+                if (entry.origVarp && !entry.isAggregateMirror && !entry.hasMemberStep())
                     collectAssignp(assignp, entry.varTarget, entry.origVarp->isOutputish());
         });
         origModp->foreach([&](AstNode* np) {
@@ -412,7 +484,7 @@ class HookInsTargetFndr final {
             if (!vrp || vrp->varp()->isFuncLocal() || vrp->access() != VAccess::READ) return;
             if (partOfAssign(vrp)) return;
             for (const auto& entry : targetp->entries) {
-                if (entry.isAggregateMirror) continue;
+                if (entry.isAggregateMirror || entry.hasMemberStep()) continue;
                 if (vrp->varp()->name() == entry.varTarget)
                     setVarRefs(vrp, m_target, entry.varTarget);
             }
@@ -541,11 +613,80 @@ class HookInsTargetFndr final {
         buildAggregateMirror(aggVarp, leaves, widths, totalW);
         return true;
     }
-    void processTargetVar(AstVar* nodep, const HookInsertEntry& entry) {
+    AstNodeDType* resolveLeafDType(AstVar* nodep, const AccessPath& path) {
+        AstNodeDType* dtp = nodep->dtypep()->skipRefp();
+        for (const AccessStep& step : path) {
+            if (step.isIndex) {
+                AstUnpackArrayDType* const arrp = VN_CAST(dtp, UnpackArrayDType);
+                if (!arrp) {
+                    nodep->fileline()->v3error("DPI-hook target '"
+                                               << nodep->name() << "' in '" << m_currHier
+                                               << "': index [" << step.index
+                                               << "] applied to a non-array element");
+                    return nullptr;
+                }
+                if (step.index >= static_cast<uint32_t>(arrp->elementsConst())) {
+                    nodep->fileline()->v3error(
+                        "DPI-hook target '" << nodep->name() << "' in '" << m_currHier
+                                            << "': element index " << step.index << " out of range ("
+                                            << arrp->elementsConst() << " elements)");
+                    return nullptr;
+                }
+                dtp = arrp->subDTypep()->skipRefp();
+            } else {
+                AstStructDType* const sdt = VN_CAST(dtp, StructDType);
+                if (!sdt) {
+                    nodep->fileline()->v3error("DPI-hook target '"
+                                               << nodep->name() << "' in '" << m_currHier
+                                               << "': member '." << step.member
+                                               << "' of a non-struct/union type");
+                    return nullptr;
+                }
+                AstNodeDType* memberDtp = nullptr;
+                for (AstMemberDType* m = sdt->membersp(); m; m = VN_CAST(m->nextp(), MemberDType))
+                    if (m->name() == step.member) {
+                        memberDtp = m->subDTypep();
+                        break;
+                    }
+                if (!memberDtp) {
+                    nodep->fileline()->v3error("DPI-hook target '"
+                                               << nodep->name() << "' in '" << m_currHier
+                                               << "': no member named '" << step.member << "'");
+                    return nullptr;
+                }
+                dtp = memberDtp->skipRefp();
+            }
+        }
+        return dtp;
+    }
+    void processTargetVar(AstVar* nodep, const HookInsertEntry& entry, size_t entryIdx) {
+        if (entry.hasMemberStep()) {
+            AstNodeDType* const leafDtp = resolveLeafDType(nodep, entry.accessPath);
+            if (!leafDtp) return;  // error already emitted
+            if (!aggIsLeafDType(leafDtp)) {
+                nodep->fileline()->v3error(
+                    "DPI-hook target '"
+                    << nodep->name() << "' in '" << m_currHier
+                    << "': the addressed member is an unpacked aggregate, which is not"
+                       " supported; target a scalar or packed leaf");
+                return;
+            }
+            const string leafName = "dpiHooked_" + nodep->name() + entry.accessPathSuffix();
+            AstVar* const varp = nodep->cloneTree(false);
+            varp->dtypep(leafDtp);
+            varp->name(leafName);
+            varp->origName(leafName);
+            varp->isDPIHookInserted(true);
+            varp->varType(VVarType::VAR);
+            varp->trace(true);
+            setVarAt(entryIdx, nodep, varp, m_target);
+            m_foundVarp = true;
+            return;
+        }
         AstNodeDType* const dtp = nodep->dtypep()->skipRefp();
         AstStructDType* const structp = VN_CAST(dtp, StructDType);
         const bool wholeAggregate
-            = !entry.elemIndex
+            = !entry.elemIndex()
               && ((structp && !structp->packed()) || VN_IS(dtp, UnpackArrayDType));
         if (wholeAggregate && expandUnpackedAggregateToMirror(nodep)) {
             m_foundVarp = true;
@@ -578,10 +719,10 @@ class HookInsTargetFndr final {
             return;
         }
         AstUnpackArrayDType* const arrayp = VN_CAST(nodep->dtypep()->skipRefp(), UnpackArrayDType);
-        if (entry.elemIndex && !arrayp && !hasArraySelUse(nodep)) return;
-        if (entry.elemIndex && arrayp
-            && entry.elemIndex.value() >= static_cast<uint32_t>(arrayp->elementsConst())) {
-            nodep->fileline()->v3error("Element index " << entry.elemIndex.value()
+        if (entry.elemIndex() && !arrayp && !hasArraySelUse(nodep)) return;
+        if (entry.elemIndex() && arrayp
+            && entry.elemIndex().value() >= static_cast<uint32_t>(arrayp->elementsConst())) {
+            nodep->fileline()->v3error("Element index " << entry.elemIndex().value()
                                                         << " is out of range for target variable '"
                                                         << nodep->name() << "' in '" << m_currHier
                                                         << "' (" << arrayp->elementsConst()
@@ -589,13 +730,13 @@ class HookInsTargetFndr final {
             return;
         }
         AstVar* const varp = nodep->cloneTree(false);
-        if (entry.elemIndex && arrayp) varp->dtypep(arrayp->subDTypep());
+        if (entry.elemIndex() && arrayp) varp->dtypep(arrayp->subDTypep());
         varp->name("dpiHooked_" + nodep->name());
         varp->origName("dpiHooked_" + nodep->name());
         varp->isDPIHookInserted(true);
         varp->varType(VVarType::VAR);
         varp->trace(true);
-        setVar(nodep, varp, m_target);
+        setVarAt(entryIdx, nodep, varp, m_target);
         m_foundVarp = true;
     }
 
@@ -1029,6 +1170,7 @@ class DPIOverrideBuilder final {
     AstVar* m_selResp = nullptr;
     AstVar* m_preVarp = nullptr;  // Intermediate the partial drivers write to
     AstArraySel* m_viewSelp = nullptr;  // The element view's own read; never redirected
+    AstNodeExpr* m_viewExprp = nullptr;  // The member/index leaf view's own read; never redirected
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
@@ -1337,9 +1479,9 @@ class DPIOverrideBuilder final {
         return true;
     }
     bool routeElementTarget(AstVar* targetVarp) {
-        if (!m_targetEntry.elemIndex) return false;
+        if (!m_targetEntry.elemIndex()) return false;
         if (!VN_IS(targetVarp->dtypep()->skipRefp(), UnpackArrayDType)) return true;
-        const uint32_t idx = m_targetEntry.elemIndex.value();
+        const uint32_t idx = m_targetEntry.elemIndex().value();
         FileLine* const fl = m_targetModp->fileline();
         m_preVarp
             = new AstVar{fl, VVarType::VAR, targetVarp->name() + "_elem" + std::to_string(idx),
@@ -1357,7 +1499,7 @@ class DPIOverrideBuilder final {
         return true;
     }
     void redirectElementReads(AstVar* targetVarp) {
-        const uint32_t idx = m_targetEntry.elemIndex.value();
+        const uint32_t idx = m_targetEntry.elemIndex().value();
         std::vector<AstArraySel*> reads;
         m_targetModp->foreach([&](AstNode* nodep) {
             AstArraySel* const aselp = VN_CAST(nodep, ArraySel);
@@ -1371,6 +1513,85 @@ class DPIOverrideBuilder final {
         for (AstArraySel* const aselp : reads) {
             aselp->replaceWith(new AstVarRef{m_targetModp->fileline(), m_selResp, VAccess::READ});
             VL_DO_DANGLING(aselp->deleteTree(), aselp);
+        }
+    }
+    // Build the READ select chain rootVarp<accessPath> (e.g. u.arr[2].x) with dtypes
+    // set, returning the outermost (leaf) expression
+    AstNodeExpr* buildAccessChain(AstVar* rootVarp, FileLine* fl) {
+        AstNodeExpr* curp = new AstVarRef{fl, rootVarp, VAccess::READ};
+        AstNodeDType* dtp = rootVarp->dtypep()->skipRefp();
+        for (const AccessStep& step : m_targetEntry.accessPath) {
+            if (step.isIndex) {
+                AstUnpackArrayDType* const arrp = VN_AS(dtp, UnpackArrayDType);
+                AstArraySel* const aselp = new AstArraySel{fl, curp, new AstConst{fl, step.index}};
+                aselp->dtypep(arrp->subDTypep());
+                dtp = arrp->subDTypep()->skipRefp();
+                curp = aselp;
+            } else {
+                AstStructDType* const sdt = VN_AS(dtp, StructDType);
+                AstNodeDType* memberDtp = nullptr;
+                for (AstMemberDType* m = sdt->membersp(); m; m = VN_CAST(m->nextp(), MemberDType))
+                    if (m->name() == step.member) {
+                        memberDtp = m->subDTypep();
+                        break;
+                    }
+                AstStructSel* const ssp = new AstStructSel{fl, curp, step.member};
+                ssp->dtypep(memberDtp);
+                dtp = memberDtp->skipRefp();
+                curp = ssp;
+            }
+        }
+        return curp;
+    }
+    // Whether `exprp` is exactly the READ select chain rootVarp<accessPath>
+    static bool matchesAccessChain(const AstNode* exprp, const AstVar* rootVarp,
+                                   const AccessPath& path) {
+        const AstNode* curp = exprp;
+        for (size_t n = path.size(); n-- > 0;) {  // outermost select first
+            const AccessStep& step = path[n];
+            if (step.isIndex) {
+                const AstArraySel* const aselp = VN_CAST(curp, ArraySel);
+                if (!aselp) return false;
+                const AstConst* const c = VN_CAST(aselp->bitp(), Const);
+                if (!c || c->toUInt() != step.index) return false;
+                curp = aselp->fromp();
+            } else {
+                const AstStructSel* const ssp = VN_CAST(curp, StructSel);
+                if (!ssp || ssp->name() != step.member) return false;
+                curp = ssp->fromp();
+            }
+        }
+        const AstVarRef* const vrp = VN_CAST(curp, VarRef);
+        return vrp && vrp->varp() == rootVarp && vrp->access().isReadOnly();
+    }
+    // Give a member/index-path target a scalar view of the addressed leaf, driven
+    // continuously from the leaf access chain (the counterpart of routeElementTarget)
+    bool routeMemberTarget(AstVar* targetVarp) {
+        if (!m_targetEntry.hasMemberStep()) return false;
+        FileLine* const fl = m_targetModp->fileline();
+        m_preVarp = new AstVar{fl, VVarType::VAR, hookBaseName(targetVarp) + "_leaf",
+                               m_targetEntry.dpiHookedVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(true);
+        m_targetModp->addStmtsp(m_preVarp);
+        AstNodeExpr* const viewp = buildAccessChain(targetVarp, fl);
+        m_viewExprp = viewp;
+        m_targetModp->addStmtsp(
+            new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr,
+                          new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, viewp}});
+        return true;
+    }
+    void redirectMemberReads(AstVar* targetVarp) {
+        std::vector<AstNodeExpr*> reads;
+        m_targetModp->foreach([&](AstNode* nodep) {
+            AstNodeExpr* const exprp = VN_CAST(nodep, NodeExpr);
+            if (!exprp || exprp == m_viewExprp) return;
+            if (matchesAccessChain(exprp, targetVarp, m_targetEntry.accessPath))
+                reads.push_back(exprp);
+        });
+        for (AstNodeExpr* const exprp : reads) {
+            exprp->replaceWith(new AstVarRef{m_targetModp->fileline(), m_selResp, VAccess::READ});
+            VL_DO_DANGLING(exprp->deleteTree(), exprp);
         }
     }
     void gatherOutputData(AstVar* targetVarp) {
@@ -1400,10 +1621,16 @@ class DPIOverrideBuilder final {
             }
         }
     }
+    string bindName(AstVar* targetVarp) const {
+        if (m_targetEntry.isAggregateMirror) return m_targetEntry.aggregateVarp->name();
+        if (!m_targetEntry.hasMemberStep()) return targetVarp->name();
+        string name = targetVarp->name();
+        for (const AccessStep& step : m_targetEntry.accessPath)
+            name += step.isIndex ? ("[" + std::to_string(step.index) + "]") : ("." + step.member);
+        return name;
+    }
     void insCaseItem(AstVar* targetVarp, AstCase* casep) {
-        const string bindName = m_targetEntry.isAggregateMirror
-                                    ? m_targetEntry.aggregateVarp->name()
-                                    : targetVarp->name();
+        const string bindName = this->bindName(targetVarp);
         AstConst* const constPackStringp
             = new AstConst{m_targetModp->fileline(), AstConst::VerilogStringLiteral{}, bindName};
         AstCvtPackString* const cvtPackStringp
@@ -1528,7 +1755,7 @@ class DPIOverrideBuilder final {
     }
     void insCondResVarp(AstVar* hookedVarp, AstVar* targetVarp) {
         m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
-                               targetVarp->name() + "_selRes", hookedVarp->dtypep()};
+                               hookBaseName(targetVarp) + "_selRes", hookedVarp->dtypep()};
         m_selResp->lifetime(VLifetime::STATIC_IMPLICIT);
         m_selResp->trace(true);
         m_selResp->isDPIHookInserted(true);
@@ -1537,9 +1764,14 @@ class DPIOverrideBuilder final {
             redirectAggregateReads(m_targetEntry.aggregateVarp);
             return;
         }
-        if (m_targetEntry.elemIndex) {
+        if (m_targetEntry.elemIndex()) {
             m_targetModp->addStmtsp(m_selResp);
             redirectElementReads(targetVarp);
+            return;
+        }
+        if (m_targetEntry.hasMemberStep()) {
+            m_targetModp->addStmtsp(m_selResp);
+            redirectMemberReads(targetVarp);
             return;
         }
         if (targetVarp->isOutputish()) {
@@ -1571,9 +1803,13 @@ class DPIOverrideBuilder final {
         // VarRefs gleich anpassen
         editVarRefp();
     }
+    std::string hookBaseName(const AstVar* targetVarp) const {
+        return targetVarp->name()
+               + (m_targetEntry.hasMemberStep() ? m_targetEntry.accessPathSuffix() : "");
+    }
     void insCondVarp(AstVar* targetVarp) {
         m_condVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
-                                targetVarp->name() + "_selCond", VFlagLogicPacked{}, 1};
+                                hookBaseName(targetVarp) + "_selCond", VFlagLogicPacked{}, 1};
         m_condVarp->lifetime(VLifetime::STATIC_IMPLICIT);
         m_condVarp->trace(false);
         m_targetModp->addStmtsp(m_condVarp);
@@ -1584,7 +1820,7 @@ class DPIOverrideBuilder final {
         idDTypep->generic(true);
         m_typeTablep->addTypesp(idDTypep);
         m_caseIdVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
-                                  targetVarp->name() + "_caseId", idDTypep};
+                                  hookBaseName(targetVarp) + "_caseId", idDTypep};
         m_caseIdVarp->lifetime(VLifetime::STATIC_IMPLICIT);
         m_caseIdVarp->trace(false);
         m_targetModp->addStmtsp(m_caseIdVarp);
@@ -1713,6 +1949,8 @@ public:
         routePartialDrivers(targetVarp);
         // Give a "var[i]" target a scalar view of the selected element
         routeElementTarget(targetVarp);
+        // Give a "u.a" member/index target a scalar view of the addressed leaf
+        routeMemberTarget(targetVarp);
         // Gather output information
         gatherOutputData(targetVarp);
         // Insert hooked vars and selection logic
@@ -1735,11 +1973,13 @@ class DPIHookInserter final {
     std::map<std::string, HookInsertTarget>& m_insCfg;
 
     // Methods
-    bool existsEntry(AstModule* modp, AstVar* varp) {
-        for (const auto& [key, target] : m_insCfg) {
-            if (target.origModp != modp) continue;
-            for (const auto& entry : target.entries) {
-                if (entry.origVarp == varp && entry.done) return true;
+    bool existsEntry(AstModule* modp, const HookInsertEntry& target) {
+        for (const auto& [key, t] : m_insCfg) {
+            if (t.origModp != modp) continue;
+            for (const auto& entry : t.entries) {
+                if (entry.done && entry.origVarp == target.origVarp
+                    && entry.accessPath == target.accessPath)
+                    return true;
             }
         }
         return false;
@@ -1812,9 +2052,9 @@ public:
                 // an array select (idx access). Left in, it fails later in V3Unknown
                 // ("Select from non-array").
                 const bool isArrayDType
-                    = !entry.elemIndex && VN_IS(ov->dtypep()->skipRefp(), UnpackArrayDType);
+                    = !entry.elemIndex() && VN_IS(ov->dtypep()->skipRefp(), UnpackArrayDType);
                 const bool readViaArraySel
-                    = !entry.elemIndex
+                    = !entry.elemIndex()
                       && std::any_of(entry.varRefps.begin(), entry.varRefps.end(),
                                      [](AstVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
                 if (isArrayDType || readViaArraySel) {
@@ -1825,7 +2065,7 @@ public:
                                       " hooking array-shaped targets is not supported.");
                     continue;
                 }
-                if (!existsEntry(target->origModp, entry.origVarp)) {
+                if (!existsEntry(target->origModp, entry)) {
                     DPIOverrideBuilder insDPIOverrideBuilder{
                         target->origModp, typeTablep, target->dpiTriggerp, entry,
                         caseCache,        selResMap,  targetLoopVarCache};
@@ -1847,7 +2087,7 @@ static std::map<std::string, HookInsertTarget> buildWorkingCfg() {
             entry.bitRangeRight = cfgEntry.bitRangeRight;
             entry.callback = cfgEntry.callback;
             entry.varTarget = cfgEntry.varTarget;
-            entry.elemIndex = cfgEntry.elemIndex;
+            entry.accessPath = cfgEntry.accessPath;
             targetp.entries.push_back(std::move(entry));
         }
     }

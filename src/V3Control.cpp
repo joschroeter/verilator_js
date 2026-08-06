@@ -899,8 +899,7 @@ public:
         const string varTarget = target.substr(pos + 1);
         return {prefix, varTarget};
     }
-    string splitElemIndex(FileLine* fl, const string& varTarget,
-                          std::optional<uint32_t>& elemIndexr) {
+    string splitElemIndex(FileLine* fl, const string& varTarget, AccessPath& accessPathr) {
         const auto open = varTarget.find('[');
         if (open == string::npos) return varTarget;
         if (varTarget.back() != ']') {
@@ -913,7 +912,7 @@ public:
             fl->v3error("Element index must be a non-negative integer: '" << varTarget << "'.");
             return varTarget.substr(0, open);
         }
-        elemIndexr = static_cast<uint32_t>(std::stoul(index));
+        accessPathr.push_back(AccessStep{true, static_cast<uint32_t>(std::stoul(index)), ""});
         return varTarget.substr(0, open);
     }
     // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
@@ -923,34 +922,34 @@ public:
         // var to the vector
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
-        std::optional<uint32_t> elemIndex;
-        const auto varTarget = splitElemIndex(fl, result.second, elemIndex);
+        AccessPath accessPath;
+        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
         // bitRangeLeft & bitRangeRight uninitialized since no bit range or bit position is
         // targeted
         m_hookInsCfg[prefix].push_back(
-            HookInsCfgEntry{std::nullopt, std::nullopt, callback, varTarget, elemIndex});
+            HookInsCfgEntry{std::nullopt, std::nullopt, callback, varTarget, accessPath});
     }
     void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
                        const uint32_t bitPos) {
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
-        std::optional<uint32_t> elemIndex;
-        const auto varTarget = splitElemIndex(fl, result.second, elemIndex);
+        AccessPath accessPath;
+        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
         // bitRangeLeft uninitialized since no bit range but a bit position is targeted
         m_hookInsCfg[prefix].push_back(
-            HookInsCfgEntry{std::nullopt, bitPos, callback, varTarget, elemIndex});
+            HookInsCfgEntry{std::nullopt, bitPos, callback, varTarget, accessPath});
     }
     void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
                        const string& bitRange) {
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
-        std::optional<uint32_t> elemIndex;
-        const auto varTarget = splitElemIndex(fl, result.second, elemIndex);
+        AccessPath accessPath;
+        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
         const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(fl, bitRange);
         if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
             m_hookInsCfg[prefix].push_back(
                 HookInsCfgEntry{bitRangePos.first.value(), bitRangePos.second.value(), callback,
-                                varTarget, elemIndex});
+                                varTarget, accessPath});
         } else {
             // If the bit range is invalid, we should not proceed with adding the entry
             return;

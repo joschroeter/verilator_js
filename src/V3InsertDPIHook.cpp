@@ -358,8 +358,11 @@ class HookInsTargetFndr final {
         return {part.substr(0, open), static_cast<uint32_t>(std::stoul(index))};
     }
     static bool partOfAssign(const AstNode* nodep) {
-        for (const AstNode* backp = nodep->backp(); backp; backp = backp->backp())
+        for (const AstNode* currp = nodep; currp->backp(); currp = currp->backp()) {
+            const AstNode* const backp = currp->backp();
+            if (backp->nextp() == currp) break;
             if (VN_IS(backp, NodeAssign)) return true;
+        }
         return false;
     }
     void navigateToTarget(const string& prefix) {

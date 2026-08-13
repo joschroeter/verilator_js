@@ -2259,16 +2259,16 @@ class DPIHookInserter final {
     std::map<std::string, HookInsertTarget>& m_insCfg;
 
     // Methods
-    bool existsEntry(AstNodeModule* modp, const HookInsertEntry& target) {
+    const HookInsertEntry* existingEntryp(AstNodeModule* modp, const HookInsertEntry& target) {
         for (const auto& [key, t] : m_insCfg) {
             if (t.hookLogicContainerp() != modp) continue;
             for (const auto& entry : t.entries) {
                 if (entry.done && entry.origVarp == target.origVarp
                     && entry.accessPath == target.accessPath)
-                    return true;
+                    return &entry;
             }
         }
-        return false;
+        return nullptr;
     }
 
 public:
@@ -2352,7 +2352,9 @@ public:
                                       " hooking array-shaped targets is not supported.");
                     continue;
                 }
-                if (!existsEntry(target->hookLogicContainerp(), entry)) {
+                const HookInsertEntry* const priorp
+                    = existingEntryp(target->hookLogicContainerp(), entry);
+                if (!priorp) {
                     DPIOverrideBuilder insDPIOverrideBuilder{target->hookLogicContainerp(),
                                                              typeTablep,
                                                              target->dpiTriggerp,
@@ -2361,6 +2363,15 @@ public:
                                                              selResMap,
                                                              targetLoopVarCache};
                     insDPIOverrideBuilder.insert();
+                } else if (priorp->callback != entry.callback
+                           || priorp->bitRangeLeft != entry.bitRangeLeft
+                           || priorp->bitRangeRight != entry.bitRangeRight) {
+                    // A signal carries at most one hook
+                    ov->v3error("DPI-hook target '"
+                                << key << "." << entry.varTarget
+                                << "' is already hooked with callback '" << priorp->callback
+                                << "'; a signal can carry only one hook - select the fault"
+                                   " (bit position, behavior) via case ids in that callback");
                 }
             }
         }

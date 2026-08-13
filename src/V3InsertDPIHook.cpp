@@ -274,7 +274,7 @@ class HookInsTargetFndr final {
     AstNetlist* const m_netlistp;
     std::map<std::string, HookInsertTarget>& m_insCfg;
     AstModule* m_targetModp = nullptr;
-    AstNode* m_targetScopep = nullptr; // Innermost scope holding the target var
+    AstNode* m_targetScopep = nullptr;  // Innermost scope holding the target var
     bool m_error = false;
     bool m_foundVarp = false;
     string m_currHier;  // Instance path resolved so far
@@ -410,7 +410,8 @@ class HookInsTargetFndr final {
             AstCell* const targetCellp = partIdx ? nullptr : targetChildCell(currModp, partName);
             if (targetCellp && targetCellp->modp()) {
                 AstNodeModule* const childModp = targetCellp->modp();
-                if (AstModule* const asModp = VN_CAST(currModp, Module)) setModules(asModp, prefix);
+                if (AstModule* const asModp = VN_CAST(currModp, Module))
+                    setModules(asModp, prefix);
                 for (AstNode* stmtp = currModp->stmtsp(); stmtp; stmtp = stmtp->nextp())
                     if (AstCell* const cellp = VN_CAST(stmtp, Cell))
                         if (cellp->modp() == childModp) setCells(cellp, prefix);
@@ -477,7 +478,8 @@ class HookInsTargetFndr final {
         for (size_t j = boundaryIdx + 1; j < parts.size(); ++j) {
             const auto [name, idx] = parseComponent(parts[j]);
             AstGenBlock* const nextp
-                = idx ? genBlockpChild(scopeGenBlockp->itemsp(), genBlockName(name, idx.value())) : nullptr;
+                = idx ? genBlockpChild(scopeGenBlockp->itemsp(), genBlockName(name, idx.value()))
+                      : nullptr;
             if (!nextp) {
                 scopeGenBlockp->fileline()->v3error(
                     "DPI-hook insertion of target '"
@@ -493,7 +495,8 @@ class HookInsTargetFndr final {
         // Record the generate-block prefix in source notation ("lane[0]") so the run-time
         // bind key can distinguish the unrolled copies
         string genScope;
-        for (size_t j = boundaryIdx; j < parts.size(); ++j) genScope += (j == boundaryIdx ? "" : ".") + parts[j];
+        for (size_t j = boundaryIdx; j < parts.size(); ++j)
+            genScope += (j == boundaryIdx ? "" : ".") + parts[j];
         const auto it = m_insCfg.find(m_target);
         if (it != m_insCfg.end())
             for (auto& entry : it->second.entries) entry.genScope = genScope;
@@ -501,7 +504,8 @@ class HookInsTargetFndr final {
         m_targetScopep = scopeGenBlockp;
         collectTargetsInModule(origModp);
     }
-    void resolveMemberPath(AstNodeModule* modp, const std::deque<string>& parts, size_t boundaryIdx) {
+    void resolveMemberPath(AstNodeModule* modp, const std::deque<string>& parts,
+                           size_t boundaryIdx) {
         AstModule* const origModp = VN_CAST(modp, Module);
         if (!origModp) {
             modp->fileline()->v3error("DPI-hook insertion of target '"
@@ -705,10 +709,11 @@ class HookInsTargetFndr final {
                     return nullptr;
                 }
                 if (step.index >= static_cast<uint32_t>(arrp->elementsConst())) {
-                    nodep->fileline()->v3error(
-                        "DPI-hook target '" << nodep->name() << "' in '" << m_currHier
-                                            << "': element index " << step.index << " out of range ("
-                                            << arrp->elementsConst() << " elements)");
+                    nodep->fileline()->v3error("DPI-hook target '"
+                                               << nodep->name() << "' in '" << m_currHier
+                                               << "': element index " << step.index
+                                               << " out of range (" << arrp->elementsConst()
+                                               << " elements)");
                     return nullptr;
                 }
                 dtp = arrp->subDTypep()->skipRefp();
@@ -1668,9 +1673,9 @@ class DPIOverrideBuilder final {
         m_targetModp->addStmtsp(m_preVarp);
         AstNodeExpr* const viewp = buildAccessChain(targetVarp, fl);
         m_viewExprp = viewp;
-        m_targetModp->addStmtsp(
-            new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr,
-                          new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, viewp}});
+        m_targetModp->addStmtsp(new AstAlways{
+            fl, VAlwaysKwd::CONT_ASSIGN, nullptr,
+            new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, viewp}});
         return true;
     }
     void redirectMemberReads(AstVar* targetVarp) {
@@ -2151,8 +2156,9 @@ public:
                     = !entry.elemIndex() && VN_IS(ov->dtypep()->skipRefp(), UnpackArrayDType);
                 const bool readViaArraySel
                     = !entry.elemIndex()
-                      && std::any_of(entry.varRefps.begin(), entry.varRefps.end(),
-                                     [](AstNodeVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
+                      && std::any_of(
+                          entry.varRefps.begin(), entry.varRefps.end(),
+                          [](AstNodeVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
                 if (isArrayDType || readViaArraySel) {
                     ov->v3warn(E_UNSUPPORTED,
                                "DPI-hook target '"

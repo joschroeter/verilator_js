@@ -866,30 +866,31 @@ public:
             return cost;
         }
     }
-    std::pair<std::optional<uint32_t>, std::optional<uint32_t>> getBitRange(FileLine* fl,
-                                                                           const string& bitRange) {
-        // Helper for parsing a bit range string of the form "x:y" and returning the start and end positions as a pair of integers
+    std::pair<std::optional<uint32_t>, std::optional<uint32_t>>
+    getBitRange(FileLine* fl, const string& bitRange) {
+        // Helper for parsing a bit range string of the form "x:y" and returning the start and end
+        // positions as a pair of integers
         const auto pos = bitRange.find(':');
         if (pos == string::npos) {
-            fl->v3error("Invalid bit range format: '" << bitRange
-                                                                << "'. Expected format 'x:y'.");
+            fl->v3error("Invalid bit range format: '" << bitRange << "'. Expected format 'x:y'.");
             return {std::nullopt, std::nullopt};
         }
         const int left = std::stoi(bitRange.substr(0, pos));
         const int right = std::stoi(bitRange.substr(pos + 1));
         if (left < 0 || right < 0) {
-            fl->v3error("Bit positions must be non-negative integers: '" << bitRange
-                                                                << "'.");
+            fl->v3error("Bit positions must be non-negative integers: '" << bitRange << "'.");
             return {std::nullopt, std::nullopt};
         }
         if (right > left) {
-            v3warn(ASCRANGE, "Ascending bit range vector: left < right of bit range: " << bitRange);
+            v3warn(ASCRANGE,
+                   "Ascending bit range vector: left < right of bit range: " << bitRange);
         }
         return {static_cast<uint32_t>(left), static_cast<uint32_t>(right)};
     }
     // Helper for adding targets to the hook-insertion config map
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
-        // Check if the instrumentation config wants to insert a hook into a variable in the top module
+        // Check if the instrumentation config wants to insert a hook into a variable in the top
+        // module
         const auto pos = target.rfind('.');
         if ((std::count(target.begin(), target.end(), '.') < 1)) {
             fl->v3error("DPI-hook insertion of target variable '"
@@ -945,11 +946,12 @@ public:
         const auto prefix = result.first;
         AccessPath accessPath;
         const auto varTarget = splitElemIndex(fl, result.second, accessPath);
-        const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos = getBitRange(fl, bitRange);
+        const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos
+            = getBitRange(fl, bitRange);
         if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
-            m_hookInsCfg[prefix].push_back(
-                HookInsCfgEntry{bitRangePos.first.value(), bitRangePos.second.value(), callback,
-                                varTarget, accessPath});
+            m_hookInsCfg[prefix].push_back(HookInsCfgEntry{bitRangePos.first.value(),
+                                                           bitRangePos.second.value(), callback,
+                                                           varTarget, accessPath});
         } else {
             // If the bit range is invalid, we should not proceed with adding the entry
             return;

@@ -1,0 +1,6 @@
+%Error: t/t_ins_dpi_hook_bitsel.v:30:22: DPI-hook target 'top_module.s.o' is already hooked with callback 'instrument_var'; a signal can carry only one hook - select the fault (bit position, behavior) via case ids in that callback
+                                       : ... note: In instance 'top_module.s'
+   30 |   output logic [3:0] o
+      |                      ^
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Exiting due to

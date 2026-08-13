@@ -296,15 +296,18 @@ class HookInsTargetFndr final {
         const auto it = m_insCfg.find(m_target);
         return it == m_insCfg.end() ? nullptr : &it->second;
     }
-    void collectAssignp(AstNodeAssign* assignp, const string& varName, bool isOutput) {
+    // Collect `assignp` if it references the resolved target variable, with matching done
+    // by variable identity, not by name
+    void collectAssignp(AstNodeAssign* assignp, const AstVar* targetVarp, const string& varName,
+                        bool isOutput) {
         AstNodeExpr* const exprp = isOutput ? assignp->lhsp() : assignp->rhsp();
         if (AstVarRef* const varrefp = VN_CAST(exprp, VarRef)) {
-            if (varrefp->varp()->name() == varName && !varrefp->varp()->isFuncLocal())
+            if (varrefp->varp() == targetVarp && !varrefp->varp()->isFuncLocal())
                 setAssigns(assignp, m_target, varName);
         } else {
             for (AstVarRef* varrefp = VN_CAST(exprp->op1p(), VarRef); varrefp;
                  varrefp = VN_CAST(varrefp->nextp(), VarRef))
-                if (varrefp->varp()->name() == varName && !varrefp->varp()->isFuncLocal())
+                if (varrefp->varp() == targetVarp && !varrefp->varp()->isFuncLocal())
                     setAssigns(assignp, m_target, varName);
         }
     }
@@ -378,6 +381,11 @@ class HookInsTargetFndr final {
     }
     static string genBlockName(const string& name, uint32_t idx) {
         return name + "__BRA__" + std::to_string(idx) + "__KET__";
+    }
+    static AstNode* scopeDeclsp(AstNode* scopep) {
+        if (AstNodeModule* const modp = VN_CAST(scopep, NodeModule)) return modp->stmtsp();
+        if (AstGenBlock* const genp = VN_CAST(scopep, GenBlock)) return genp->itemsp();
+        return nullptr;
     }
     static AstGenBlock* genBlockpChild(AstNode* stmtsp, const string& name) {
         for (AstNode* stmtp = stmtsp; stmtp; stmtp = stmtp->nextp())
@@ -643,15 +651,15 @@ class HookInsTargetFndr final {
         const HookInsertTarget* const targetp = currTargetp();
         if (!targetp) return;
         std::vector<AstVar*> targetVarps;
-        m_targetScopep->foreach([&](AstNode* np) {
+        for (AstNode* np = scopeDeclsp(m_targetScopep); np; np = np->nextp()) {
             AstVar* const varp = VN_CAST(np, Var);
-            if (!varp || varp->isFuncLocal()) return;
+            if (!varp || varp->isFuncLocal()) continue;
             for (const auto& entry : targetp->entries)
                 if (varp->name() == entry.varTarget) {
                     targetVarps.push_back(varp);
                     break;
                 }
-        });
+        }
         for (AstVar* const varp : targetVarps)
             for (size_t ei = 0; ei < targetp->entries.size(); ++ei)
                 if (varp->name() == targetp->entries[ei].varTarget)
@@ -661,7 +669,8 @@ class HookInsTargetFndr final {
             if (!assignp) return;
             for (const auto& entry : targetp->entries)
                 if (entry.origVarp && !entry.isAggregateMirror && !entry.hasMemberStep())
-                    collectAssignp(assignp, entry.varTarget, entry.origVarp->isOutputish());
+                    collectAssignp(assignp, entry.origVarp, entry.varTarget,
+                                   entry.origVarp->isOutputish());
         });
         origModp->foreach([&](AstNode* np) {
             AstNodeVarRef* const vrp = VN_CAST(np, NodeVarRef);

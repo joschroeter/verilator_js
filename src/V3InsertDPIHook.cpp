@@ -106,6 +106,7 @@ struct HookInsertEntry final {
     AstVar* dpiHookedVarp = nullptr;  // Cloned variable pointer from original with edits
     std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
     std::vector<AstNodeVarRef*> varRefps;  // Read refs to redirect (VarRef or cross-ref VarXRef)
+    std::vector<AstNodeVarRef*> wrRefps;  // Driver refs of an interface signal
     bool found = false;  // Whether the target variable was found during data finder pass
     bool done = false;  // Whether the hook insertion has been completed for a signal
     bool isAggregateMirror = false;
@@ -147,19 +148,24 @@ struct HookInsertEntry final {
 };
 struct HookInsertTarget final {
     AstModule* origModp = nullptr;  // Original module pointer containing target var
+    AstIface* ifacep = nullptr;  // Interface holding the target signals
     AstVar* dpiTriggerp = nullptr;  // Trigger for the DPI function/task
     bool error = false;  // Whether an error occurred during the finder visitor
     bool processed = false;  // Whether the data finder pass has processed this target
     std::vector<AstCell*> cellps;  // Cells that need to have hook inputs
     std::vector<AstModule*> modps;  // Modules that need to have hook inputs
     std::vector<HookInsertEntry> entries;  // All hook insertion entries for this target
+    AstNodeModule* hookLogicContainerp() const {
+        return ifacep ? static_cast<AstNodeModule*>(ifacep)
+                      : static_cast<AstNodeModule*>(origModp);
+    }  // The container receiving the hook logic
 };
 
 //##################################################################################
 // Shared builder for the "path filter" always-block emitted by path router
 // (HookPathRouter::addPathFilter) and override builder (DPIOverrideBuilder::insTargetFilter).
 struct PathFilterConfig final {
-    AstModule* modp = nullptr;  // Module receiving the always block (also source of fileline)
+    AstNodeModule* modp = nullptr;  // Module/iface receiving the always block (also fileline src)
     AstBasicDType* intDTypep = nullptr;  // Signed-int dtype for the loop index (pre-registered)
     AstBasicDType* stringDTypep = nullptr;  // String dtype for the decoded part (pre-registered)
     AstVar* hookPathp = nullptr;  // DPIHOOK_PATH input being decoded
@@ -169,8 +175,9 @@ struct PathFilterConfig final {
     bool declTargetInLoopBody = false;  // Declare targetVar in the loop body (true) or the
                                         // always body (false)
     string alwaysName;  // Name given to the generated begin/always block
-    std::unordered_map<AstModule*, AstCase*>* caseCachep = nullptr;  // Cache to register case in
-    std::unordered_map<AstModule*, AstVar*>* loopVarCachep
+    std::unordered_map<AstNodeModule*, AstCase*>* caseCachep
+        = nullptr;  // Cache to register case in
+    std::unordered_map<AstNodeModule*, AstVar*>* loopVarCachep
         = nullptr;  // Cache to register loop index var in, keyed by module.
 };
 struct PathFilterResult final {
@@ -180,7 +187,7 @@ struct PathFilterResult final {
     AstArraySel* targetArraySelp = nullptr;  // Outer arraysel: hookPath[i][0]
 };
 static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
-    AstModule* const modp = cfg.modp;
+    AstNodeModule* const modp = cfg.modp;
     FileLine* const fl = modp->fileline();
     // Create the loop variable index
     AstVar* const loopVarp = new AstVar{fl, VVarType::VAR, "i", cfg.intDTypep};
@@ -308,6 +315,10 @@ class HookInsTargetFndr final {
     void setOrigModule(AstModule* origModulep, const string& target) {
         const auto it = m_insCfg.find(target);
         if (it != m_insCfg.end()) it->second.origModp = origModulep;
+    }
+    void setIface(AstIface* ifacep, const string& target) {
+        const auto it = m_insCfg.find(target);
+        if (it != m_insCfg.end()) it->second.ifacep = ifacep;
     }
     void setProcessed(const string& target) {
         const auto it = m_insCfg.find(target);
@@ -451,6 +462,10 @@ class HookInsTargetFndr final {
         }
         AstModule* const origModp = VN_CAST(currModp, Module);
         if (!origModp) {
+            if (AstIface* const ifacep = VN_CAST(currModp, Iface)) {
+                resolveInterfacePath(ifacep, prefix);
+                return;
+            }
             currModp->fileline()->v3error("DPI-hook insertion of target '"
                                           << prefix
                                           << "' resolves to a non-module container, which is not"
@@ -536,6 +551,92 @@ class HookInsTargetFndr final {
         setOrigModule(origModp, m_target);
         m_targetScopep = origModp;
         collectTargetsInModule(origModp);
+    }
+    // Handle "top.b.data" where the prefix "top.b" resolves to an interface.
+    // The target signal `data` lives in the interface, and its reads/drivers are
+    // spread across every module connected to it -> so collection must go
+    // netlist-wide instead of scanning a single owning module
+    void resolveInterfacePath(AstIface* ifacep, const string& prefix) {
+        const HookInsertTarget* const targetp = currTargetp();
+        if (!targetp) return;
+        int nIfaceCells = 0;
+        m_netlistp->foreach([&](AstNode* np) {
+            const AstCell* const cellp = VN_CAST(np, Cell);
+            if (cellp && cellp->modp() == ifacep) ++nIfaceCells;
+        });
+        if (nIfaceCells > 1) {
+            ifacep->fileline()->v3error("DPI-hook insertion of target '"
+                                        << prefix << "': interface '" << ifacep->name() << "' has "
+                                        << nIfaceCells
+                                        << " instances; hooking signals of a multiply-instantiated"
+                                           " interface is not supported");
+            m_error = true;
+            return;
+        }
+        setIface(ifacep, m_target);
+        for (size_t ei = 0; ei < targetp->entries.size(); ++ei) {
+            const HookInsertEntry& entry = targetp->entries[ei];
+            AstVar* const sigVarp = targetChildVar(ifacep, entry.varTarget);
+            if (!sigVarp) {
+                ifacep->fileline()->v3error("DPI-hook insertion of target '"
+                                            << prefix << "': signal '" << entry.varTarget
+                                            << "' not found in interface '" << ifacep->name()
+                                            << "'");
+                m_error = true;
+                return;
+            }
+            AstNodeDType* const dtp = sigVarp->dtypep()->skipRefp();
+            const AstStructDType* const structp = VN_CAST(dtp, StructDType);
+            if (entry.hasMemberStep() || (structp && !structp->packed())
+                || VN_IS(dtp, UnpackArrayDType)) {
+                sigVarp->fileline()->v3error(
+                    "DPI-hook insertion of target '"
+                    << prefix << "." << entry.varTarget
+                    << "': aggregate or member-addressed interface signals are not supported;"
+                       " target a packed leaf signal");
+                m_error = true;
+                return;
+            }
+            processTargetVar(sigVarp, entry, ei);
+        }
+        if (!m_foundVarp) {
+            m_error = true;
+            return;
+        }
+        collectIfaceRefs(prefix);
+    }
+    // Collect reads and drivers of the resolved interface signals across the netlist
+    void collectIfaceRefs(const string& prefix) {
+        const auto it = m_insCfg.find(m_target);
+        if (it == m_insCfg.end()) return;
+        for (AstNodeModule* modp = m_netlistp->modulesp(); modp;
+             modp = VN_AS(modp->nextp(), NodeModule)) {
+            modp->foreach([&](AstNode* np) {
+                AstNodeVarRef* const vrp = VN_CAST(np, NodeVarRef);
+                if (!vrp) return;
+                for (auto& entry : it->second.entries) {
+                    if (!entry.origVarp || vrp->varp() != entry.origVarp) continue;
+                    if (vrp->access().isRW()) {
+                        vrp->fileline()->v3error(
+                            "DPI-hook insertion of target '"
+                            << prefix << "." << entry.varTarget
+                            << "': a read-write reference to an interface signal is not"
+                               " supported");
+                        m_error = true;
+                    } else if (vrp->access().isWriteOnly()) {
+                        entry.wrRefps.push_back(vrp);
+                    } else {
+                        entry.varRefps.push_back(vrp);
+                    }
+                    return;
+                }
+            });
+        }
+        for (const auto& entry : it->second.entries) {
+            UINFO(4, "Iface target '" << m_target << "." << entry.varTarget
+                                      << "': " << entry.varRefps.size() << " read ref(s), "
+                                      << entry.wrRefps.size() << " driver ref(s)" << endl);
+        }
     }
     void collectTargetsInModule(AstModule* origModp) {
         m_targetModp = origModp;
@@ -858,9 +959,9 @@ class HookPathRouter final {
     const string m_cfgKey;
     DTypeCache& m_dtypeCache;
     HookInsertTarget& m_insTarget;
-    std::unordered_map<AstModule*, AstCase*>& m_caseCache;
-    std::unordered_map<AstModule*, AstVar*>& m_loopVarCache;  // Shared path-filter loop indices
-    std::unordered_map<AstModule*, std::set<std::string>>&
+    std::unordered_map<AstNodeModule*, AstCase*>& m_caseCache;
+    std::unordered_map<AstNodeModule*, AstVar*>& m_loopVarCache;  // Shared path-filter loop idxs
+    std::unordered_map<AstNodeModule*, std::set<std::string>>&
         m_caseChildCells;  // Child-cell case items
 
     // Methods
@@ -888,7 +989,7 @@ class HookPathRouter final {
         loopp->addStmtsp(initialBeginp);
         return loopp;
     }
-    AstVar* addCaseId(AstModule* modp) {
+    AstVar* addCaseId(AstNodeModule* modp) {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         AstBasicDType* const elemDTypep
             = new AstBasicDType{modp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
@@ -898,22 +999,24 @@ class HookPathRouter final {
             = new AstUnpackArrayDType{modp->fileline(), elemDTypep,
                                       new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
         typeTablep->addTypesp(arrDTypep);
+        const bool isIface = VN_IS(modp, Iface);
         AstVar* const caseIdp
-            = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_CASE_ID", arrDTypep};
+            = new AstVar{modp->fileline(), isIface ? VVarType::VAR : VVarType::PORT,
+                         "DPIHOOK_CASE_ID", arrDTypep};
         caseIdp->lifetime(VLifetime::STATIC_IMPLICIT);
-        caseIdp->direction(VDirection::INPUT);
+        if (!isIface) caseIdp->direction(VDirection::INPUT);
         caseIdp->trace(false);
         modp->addStmtsp(caseIdp);
         return caseIdp;
     }
-    AstVar* addSelInput(AstModule* modp, int idx) {
+    AstVar* addSelInput(AstNodeModule* modp, int idx) {
         const bool isInitModp = !m_insTarget.modps.empty() && m_insTarget.modps.front() == modp;
-        const bool isOrigModp = m_insTarget.origModp == modp;
+        const bool isOrigModp = m_insTarget.hookLogicContainerp() == modp;
         AstVar* const dpihookPathp = createDPIHookPathp(modp, idx, isInitModp, isOrigModp);
         modp->addStmtsp(dpihookPathp);
         return dpihookPathp;
     }
-    AstVar* createDPIHookPathp(AstModule* modp, int idx, bool isInitModp = false,
+    AstVar* createDPIHookPathp(AstNodeModule* modp, int idx, bool isInitModp = false,
                                bool isOrigModp = false) {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         // Generate necessary dtype for Path Varps and Pinsp
@@ -923,9 +1026,11 @@ class HookPathRouter final {
             m_dtypeCache.stringDTypep->generic(true);
             typeTablep->addTypesp(m_dtypeCache.stringDTypep);
         }
-        AstVar* const dpihookPathp = new AstVar{modp->fileline(), VVarType::PORT, "DPIHOOK_PATH",
-                                                m_dtypeCache.stringDTypep};
-        dpihookPathp->direction(VDirection::INPUT);
+        const bool isIface = VN_IS(modp, Iface);
+        AstVar* const dpihookPathp
+            = new AstVar{modp->fileline(), isIface ? VVarType::VAR : VVarType::PORT,
+                         "DPIHOOK_PATH", m_dtypeCache.stringDTypep};
+        if (!isIface) dpihookPathp->direction(VDirection::INPUT);
         dpihookPathp->lifetime(VLifetime::STATIC_IMPLICIT);
         dpihookPathp->trace(false);
         if (isOrigModp) {
@@ -959,16 +1064,17 @@ class HookPathRouter final {
         dpihookPathp->dtypep(pathsDTypep);
         return dpihookPathp;
     }
-    AstVar* findExistingInputVar(AstModule* modp, const string& name) {
+    AstVar* findExistingInputVar(AstNodeModule* modp, const string& name) {
+        const bool isIface = VN_IS(modp, Iface);
         for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
             AstVar* const varp = VN_CAST(stmtp, Var);
             if (!varp) continue;
-            if (varp->name() == name && varp->isInput()) return varp;
+            if (varp->name() == name && (varp->isInput() || isIface)) return varp;
         }
         return nullptr;
     }
     bool hasDPITrigger() {
-        AstModule* const origModp = m_insTarget.origModp;
+        AstNodeModule* const origModp = m_insTarget.hookLogicContainerp();
         for (AstNode* stmtp = origModp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
             AstVar* const varp = VN_CAST(stmtp, Var);
             if (!varp) continue;
@@ -979,7 +1085,7 @@ class HookPathRouter final {
         }
         return false;
     }
-    bool hasPathFilter(AstModule* modp) {
+    bool hasPathFilter(AstNodeModule* modp) {
         const auto it = m_caseCache.find(modp);
         if (it != m_caseCache.end()) return it->second != nullptr;
         return false;
@@ -1142,6 +1248,42 @@ class HookPathRouter final {
             cellp->addPinsp(pinp);
         }
     }
+    // Whether the parent already drives `ifaceVarp` through this instance
+    bool hasIfaceCtrlAssign(AstModule* parentp, const AstVar* ifaceVarp, const string& cellName) {
+        bool found = false;
+        parentp->foreach([&](AstNode* np) {
+            const AstVarXRef* const xrefp = VN_CAST(np, VarXRef);
+            if (xrefp && xrefp->varp() == ifaceVarp && xrefp->dotted() == cellName
+                && xrefp->access().isWriteOrRW())
+                found = true;
+        });
+        return found;
+    }
+    void addIfaceCtrlAssign(AstModule* parentp, AstCell* cellp, AstVar* ifaceVarp, AstVar* srcp) {
+        if (!ifaceVarp || !srcp || hasIfaceCtrlAssign(parentp, ifaceVarp, cellp->name())) return;
+        FileLine* const fl = cellp->fileline();
+        AstVarXRef* const lhsp = new AstVarXRef{fl, ifaceVarp, cellp->name(), VAccess::WRITE};
+        AstVarRef* const rhsp = new AstVarRef{fl, srcp, VAccess::READ};
+        AstAssignW* const assignp = new AstAssignW{fl, lhsp, rhsp};
+        parentp->addStmtsp(new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignp});
+    }
+    void insCtrlLogic2IfaceCellp(AstCell* cellp, int idx,
+                                 const std::vector<AstVar*>& dpihookCaseIdps,
+                                 const std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+        AstModule* parentp = nullptr;
+        for (AstModule* modp : m_insTarget.modps) {
+            for (AstNode* np = modp->op2p(); np; np = np->nextp())
+                if (VN_CAST(np, Cell) == cellp) parentp = modp;
+            if (parentp) break;
+        }
+        if (!parentp) return;
+        AstIface* const ifacep = VN_AS(cellp->modp(), Iface);
+        addIfaceCtrlAssign(parentp, cellp, findExistingInputVar(ifacep, "DPIHOOK_CASE_ID"),
+                           dpihookCaseIdps[idx]);
+        const auto pathIt = instPathVarps.find(cellp);
+        addIfaceCtrlAssign(parentp, cellp, findExistingInputVar(ifacep, "DPIHOOK_PATH"),
+                           pathIt == instPathVarps.end() ? nullptr : pathIt->second);
+    }
     void insCtrlLogic2Cellp(const std::vector<AstVar*>& dpihookCaseIdps,
                             const std::vector<AstVar*>& dpihookPathps,
                             const std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
@@ -1149,16 +1291,21 @@ class HookPathRouter final {
         int idx = 0;
         for (AstCell* cellp : m_insTarget.cellps) {
             if (prevCellp && cellp->modp() != prevCellp->modp()) idx++;
-            if (!hasInputPin(cellp, "DPIHOOK_CASE_ID")) addCaseIdPin(cellp, idx, dpihookCaseIdps);
-            if (!hasInputPin(cellp, "DPIHOOK_PATH"))
-                addSelPin(cellp, idx, dpihookPathps, instPathVarps);
+            if (VN_IS(cellp->modp(), Iface)) {
+                insCtrlLogic2IfaceCellp(cellp, idx, dpihookCaseIdps, instPathVarps);
+            } else {
+                if (!hasInputPin(cellp, "DPIHOOK_CASE_ID"))
+                    addCaseIdPin(cellp, idx, dpihookCaseIdps);
+                if (!hasInputPin(cellp, "DPIHOOK_PATH"))
+                    addSelPin(cellp, idx, dpihookPathps, instPathVarps);
+            }
             prevCellp = cellp;
         }
     }
     void insCtrlLogic2Modp(std::vector<AstVar*>& dpihookCaseIdps,
                            std::vector<AstVar*>& dpihookPathps,
                            std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
-        AstModule* const origModp = m_insTarget.origModp;
+        AstNodeModule* const origModp = m_insTarget.hookLogicContainerp();
         size_t idx = 0;
         for (AstModule* modp : m_insTarget.modps) {
             AstVar* hookCaseId = findExistingInputVar(modp, "DPIHOOK_CASE_ID");
@@ -1190,7 +1337,7 @@ class HookPathRouter final {
         dpihookPathps.push_back(origHookPathp);
     }
     void insDPITrigger2Modp() {
-        AstModule* const origModp = m_insTarget.origModp;
+        AstNodeModule* const origModp = m_insTarget.hookLogicContainerp();
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         AstBasicDType* const dpiTriggerTypep
             = new AstBasicDType{origModp->fileline(), VBasicDTypeKwd::BIT, VSigning::NOSIGN};
@@ -1210,9 +1357,9 @@ class HookPathRouter final {
 
 public:
     HookPathRouter(AstNetlist* nodep, HookInsertTarget& insTarget, const string cfgKey,
-                   DTypeCache& dtypeCache, std::unordered_map<AstModule*, AstCase*>& caseCache,
-                   std::unordered_map<AstModule*, AstVar*>& loopVarCache,
-                   std::unordered_map<AstModule*, std::set<std::string>>& caseChildCells)
+                   DTypeCache& dtypeCache, std::unordered_map<AstNodeModule*, AstCase*>& caseCache,
+                   std::unordered_map<AstNodeModule*, AstVar*>& loopVarCache,
+                   std::unordered_map<AstNodeModule*, std::set<std::string>>& caseChildCells)
         : m_netlistp{nodep}
         , m_insTarget{insTarget}
         , m_cfgKey{cfgKey}
@@ -1245,7 +1392,7 @@ class DPIOverrideBuilder final {
     };
     // Members
     AstBasicDType* m_idDTypep = nullptr;
-    AstModule* m_targetModp;  // Provided by constructor
+    AstNodeModule* m_targetModp;  // Provided by constructor (module or interface)
     AstFunc* m_funcp = nullptr;
     AstTask* m_taskp = nullptr;
     AstTypeTable* m_typeTablep;  // Provided by constructor
@@ -1260,8 +1407,8 @@ class DPIOverrideBuilder final {
     HookInsertEntry& m_targetEntry;  // Provided by constructor
     std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
     std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
-    std::unordered_map<AstModule*, AstCase*>& m_caseCache;  // Provided by constructor
-    std::unordered_map<AstModule*, AstVar*>&
+    std::unordered_map<AstNodeModule*, AstCase*>& m_caseCache;  // Provided by constructor
+    std::unordered_map<AstNodeModule*, AstVar*>&
         m_targetLoopVarCache;  // Loop index var of each module's DPIHOOK_TARGET_FILTER
 
     // Methods
@@ -1447,18 +1594,21 @@ class DPIOverrideBuilder final {
         return nullptr;
     }
     AstVar* findPathVarp() {
+        const bool isIface = VN_IS(m_targetModp, Iface);
         for (AstNode* level2p = m_targetModp->op2p(); level2p; level2p = level2p->nextp()) {
             AstVar* const varp = VN_CAST(level2p, Var);
-            if (varp && varp->isInput() && varp->name() == "DPIHOOK_PATH") return varp;
+            if (varp && (varp->isInput() || isIface) && varp->name() == "DPIHOOK_PATH")
+                return varp;
         }
         //TODO: Fehler, wenn was nicht passt aber das sollte ja eigentlich nicht passieren [3]
         return nullptr;
     }
-    AstVar* getCaseIdp(AstModule* modp) {
+    AstVar* getCaseIdp(AstNodeModule* modp) {
+        const bool isIface = VN_IS(modp, Iface);
         for (AstNode* stmtsp = modp->stmtsp(); stmtsp; stmtsp = stmtsp->nextp()) {
             AstVar* const varp = VN_CAST(stmtsp, Var);
             if (!varp) continue;
-            if (varp->isInput() && varp->name() == "DPIHOOK_CASE_ID") return varp;
+            if ((varp->isInput() || isIface) && varp->name() == "DPIHOOK_CASE_ID") return varp;
         }
         return nullptr;
     }
@@ -1539,12 +1689,13 @@ class DPIOverrideBuilder final {
     // Redirect a collected read to `selResp`. Plain VarRef is repointed, cross-ref
     // is replaced by local ref, since its dotted-scope info would be left inconsistent
     // by bare varp() change
-    static void redirectReadRef(AstNodeVarRef* refp, AstVar* selResp) {
-        if (VN_IS(refp, VarXRef)) {
+    void redirectReadRef(AstNodeVarRef* refp, AstVar* selResp) {
+        if (VN_IS(refp, VarXRef) && !VN_IS(m_targetModp, Iface)) {
             refp->replaceWith(new AstVarRef{refp->fileline(), selResp, VAccess::READ});
             VL_DO_DANGLING(refp->deleteTree(), refp);
         } else {
             refp->varp(selResp);
+            refp->name(selResp->name());
         }
     }
     void editVarRefp(AstNodeVarRef* varRefp = nullptr) {
@@ -1573,6 +1724,30 @@ class DPIOverrideBuilder final {
             });
         }
         m_targetEntry.assignps.clear();  // Target has no drivers left
+        return true;
+    }
+    void addIfaceModportMember(AstVar* varp, VDirection::en direction) {
+        AstIface* const ifacep = VN_CAST(m_targetModp, Iface);
+        if (!ifacep) return;
+        for (AstNode* stmtp = ifacep->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+            if (AstModport* const modportp = VN_CAST(stmtp, Modport)) {
+                modportp->addVarsp(
+                    new AstModportVarRef{varp->fileline(), varp->name(), direction});
+            }
+        }
+    }
+    bool routeIfaceDrivers(AstVar* targetVarp) {
+        if (!VN_IS(m_targetModp, Iface) || m_targetEntry.wrRefps.empty()) return false;
+        m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               targetVarp->name() + "_preHook", targetVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(true);
+        m_targetModp->addStmtsp(m_preVarp);
+        addIfaceModportMember(m_preVarp, VDirection::OUTPUT);
+        for (AstNodeVarRef* const refp : m_targetEntry.wrRefps) {
+            refp->varp(m_preVarp);
+            refp->name(m_preVarp->name());
+        }
         return true;
     }
     bool routeElementTarget(AstVar* targetVarp) {
@@ -1899,6 +2074,7 @@ class DPIOverrideBuilder final {
             return;
         }
         m_targetModp->addStmtsp(m_selResp);
+        addIfaceModportMember(m_selResp, VDirection::INPUT);
         editAssignp(targetVarp, nullptr);
         // VarRefs gleich anpassen
         editVarRefp();
@@ -2028,11 +2204,11 @@ class DPIOverrideBuilder final {
     }
 
 public:
-    DPIOverrideBuilder(AstModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
+    DPIOverrideBuilder(AstNodeModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
                        HookInsertEntry& targetEntry,
-                       std::unordered_map<AstModule*, AstCase*>& caseCache,
+                       std::unordered_map<AstNodeModule*, AstCase*>& caseCache,
                        std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap,
-                       std::unordered_map<AstModule*, AstVar*>& targetLoopVarCache)
+                       std::unordered_map<AstNodeModule*, AstVar*>& targetLoopVarCache)
         : m_targetModp{targetModule}
         , m_typeTablep{typeTablep}
         , m_dpiTriggerp{dpiTriggerp}
@@ -2052,6 +2228,8 @@ public:
         routeElementTarget(targetVarp);
         // Give a "u.a" member/index target a scalar view of the addressed leaf
         routeMemberTarget(targetVarp);
+        // Route an interface signal's cross-module drivers through a pre-hook var
+        routeIfaceDrivers(targetVarp);
         // Gather output information
         gatherOutputData(targetVarp);
         // Insert hooked vars and selection logic
@@ -2074,9 +2252,9 @@ class DPIHookInserter final {
     std::map<std::string, HookInsertTarget>& m_insCfg;
 
     // Methods
-    bool existsEntry(AstModule* modp, const HookInsertEntry& target) {
+    bool existsEntry(AstNodeModule* modp, const HookInsertEntry& target) {
         for (const auto& [key, t] : m_insCfg) {
-            if (t.origModp != modp) continue;
+            if (t.hookLogicContainerp() != modp) continue;
             for (const auto& entry : t.entries) {
                 if (entry.done && entry.origVarp == target.origVarp
                     && entry.accessPath == target.accessPath)
@@ -2094,9 +2272,9 @@ public:
     void insDPIHooks() {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         DTypeCache dtypeCache;
-        std::unordered_map<AstModule*, AstCase*> caseCache;
-        std::unordered_map<AstModule*, AstVar*> targetLoopVarCache;
-        std::unordered_map<AstModule*, std::set<std::string>> caseCells;
+        std::unordered_map<AstNodeModule*, AstCase*> caseCache;
+        std::unordered_map<AstNodeModule*, AstVar*> targetLoopVarCache;
+        std::unordered_map<AstNodeModule*, std::set<std::string>> caseCells;
         // Map in Vector kopieren
         std::vector<std::pair<std::string, HookInsertTarget*>> sortedCfg;
         for (auto& [key, target] : m_insCfg) sortedCfg.emplace_back(key, &target);
@@ -2167,10 +2345,14 @@ public:
                                       " hooking array-shaped targets is not supported.");
                     continue;
                 }
-                if (!existsEntry(target->origModp, entry)) {
-                    DPIOverrideBuilder insDPIOverrideBuilder{
-                        target->origModp, typeTablep, target->dpiTriggerp, entry,
-                        caseCache,        selResMap,  targetLoopVarCache};
+                if (!existsEntry(target->hookLogicContainerp(), entry)) {
+                    DPIOverrideBuilder insDPIOverrideBuilder{target->hookLogicContainerp(),
+                                                             typeTablep,
+                                                             target->dpiTriggerp,
+                                                             entry,
+                                                             caseCache,
+                                                             selResMap,
+                                                             targetLoopVarCache};
                     insDPIOverrideBuilder.insert();
                 }
             }

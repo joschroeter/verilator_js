@@ -1,0 +1,6 @@
+%Error: t/t_ins_dpi_hook_iface_bad.v:12:11: DPI-hook insertion of target 'top_module.b': interface 'simple_if' has 2 instances; hooking signals of a multiply-instantiated interface is not supported
+   12 | interface simple_if;
+      |           ^~~~~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Incomplete hook-insertion configuration for target 'top_module.b'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Exiting due to

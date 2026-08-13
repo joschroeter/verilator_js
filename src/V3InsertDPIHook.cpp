@@ -112,6 +112,11 @@ struct HookInsertEntry final {
     bool isAggregateMirror = false;
     AstVar* aggregateVarp = nullptr;  // The original unpacked aggregate var
     std::string genScope;  // Generate-block prefix in source notation ("lane[0]")
+    // Which bit selection the target carries, decoded once here because the
+    // callback's port list and its call arguments must agree: -bit-pos sets only
+    // the right position, -bit-range sets both, and neither means whole-signal
+    bool hasBitPos() const { return !bitRangeLeft.has_value() && bitRangeRight.has_value(); }
+    bool hasBitRange() const { return bitRangeLeft.has_value() && bitRangeRight.has_value(); }
     std::optional<uint32_t> elemIndex() const {
         if (accessPath.size() == 1 && accessPath.front().isIndex) return accessPath.front().index;
         return std::nullopt;
@@ -1496,16 +1501,14 @@ class DPIOverrideBuilder final {
         dpiTriggerp->funcLocal(true);
         funcp->addStmtsp(dpiTriggerp);
 
-        //TODO: Nochmal anschauen ob man die if logic verbessern kann [4]
-        if (!m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
+        if (m_targetEntry.hasBitPos()) {
             AstVar* const bitPos
                 = new AstVar{funcp->fileline(), VVarType::PORT, "bitPos", m_idDTypep};
             bitPos->direction(VDirection::INPUT);
             bitPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
             bitPos->funcLocal(true);
             funcp->addStmtsp(bitPos);
-        } else if (m_targetEntry.bitRangeLeft.has_value()
-                   && m_targetEntry.bitRangeRight.has_value()) {
+        } else if (m_targetEntry.hasBitRange()) {
             AstVar* const bitStartPos
                 = new AstVar{funcp->fileline(), VVarType::PORT, "bitStartPos", m_idDTypep};
             bitStartPos->direction(VDirection::INPUT);
@@ -1531,21 +1534,17 @@ class DPIOverrideBuilder final {
     void finalizeFuncRef(AstNodeFTaskRef* funcRefp, AstVar* targetVarp, AstNodeExpr* drivingRhsp) {
         AstVarRef* const caseIdRefp
             = new AstVarRef{funcRefp->fileline(), m_caseIdVarp, VAccess::READ};
-        //AstConst* constIDp = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
-        //                                  m_targetEntry.insID};
-        //constIDp->dtypeChgSigned();
         AstVarRef* const triggerRefp
             = new AstVarRef{funcRefp->fileline(), m_dpiTriggerp, VAccess::READ};
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", caseIdRefp});
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", triggerRefp});
-        if (!m_targetEntry.bitRangeLeft.has_value() && m_targetEntry.bitRangeRight.has_value()) {
+        if (m_targetEntry.hasBitPos()) {
             AstConst* const constBitPosp
                 = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
                                m_targetEntry.bitRangeRight.value()};
             constBitPosp->dtypeChgSigned();
             funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitPosp});
-        } else if (m_targetEntry.bitRangeLeft.has_value()
-                   && m_targetEntry.bitRangeRight.has_value()) {
+        } else if (m_targetEntry.hasBitRange()) {
             AstConst* const constBitStartPosp
                 = new AstConst{funcRefp->fileline(), m_targetEntry.bitRangeLeft.value()};
             constBitStartPosp->dtypeChgSigned();
@@ -1595,9 +1594,9 @@ class DPIOverrideBuilder final {
             funcp->dtypeChgSigned();
             return finalizeFunc(funcp, targetVarp);
         }
-        //TODO: Implement/Analyse scenarios where task needs to be used [5]
-        //AstTask* taskp = new AstTask{m_targetModp->fileline(), callback, nullptr};
-        //return finalizeTask();
+        // Unreachable: the finder rejects a target whose basic type is neither
+        // literal nor implicit before an entry ever reaches the builder
+        targetVarp->v3fatalSrc("DPI-hook target survived the finder's type check");
         return nullptr;
     }
     AstVar* findPathVarp() {
@@ -1607,7 +1606,9 @@ class DPIOverrideBuilder final {
             if (varp && (varp->isInput() || isIface) && varp->name() == "DPIHOOK_PATH")
                 return varp;
         }
-        //TODO: Fehler, wenn was nicht passt aber das sollte ja eigentlich nicht passieren [3]
+        // The path router always adds DPIHOOK_PATH to the target container before
+        // the override builder runs
+        m_targetModp->v3fatalSrc("DPI-hook path input missing in target container");
         return nullptr;
     }
     AstVar* getCaseIdp(AstNodeModule* modp) {
@@ -2083,7 +2084,7 @@ class DPIOverrideBuilder final {
         m_targetModp->addStmtsp(m_selResp);
         addIfaceModportMember(m_selResp, VDirection::INPUT);
         editAssignp(targetVarp, nullptr);
-        // VarRefs gleich anpassen
+        // Redirect the collected reads
         editVarRefp();
     }
     std::string hookBaseName(const AstVar* targetVarp) const {
@@ -2282,7 +2283,7 @@ public:
         std::unordered_map<AstNodeModule*, AstCase*> caseCache;
         std::unordered_map<AstNodeModule*, AstVar*> targetLoopVarCache;
         std::unordered_map<AstNodeModule*, std::set<std::string>> caseCells;
-        // Map in Vector kopieren
+        // Copy the map into a vector for sorting
         std::vector<std::pair<std::string, HookInsertTarget*>> sortedCfg;
         for (auto& [key, target] : m_insCfg) sortedCfg.emplace_back(key, &target);
 

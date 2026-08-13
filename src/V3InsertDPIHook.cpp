@@ -446,12 +446,11 @@ class HookInsTargetFndr final {
             }
             // An indexed component may be an unrolled generate-loop iteration
             // ("lane[0]"): descend into the generate block and pin the var there
-            if (partIdx) {
-                if (AstGenBlock* const genBlockp = genBlockpChild(
-                        currModp->stmtsp(), genBlockName(partName, partIdx.value()))) {
-                    resolveGeneratePath(currModp, genBlockp, targetParts, i);
-                    return;
-                }
+            if (AstGenBlock* const genBlockp
+                = genBlockpChild(currModp->stmtsp(),
+                                 partIdx ? genBlockName(partName, partIdx.value()) : partName)) {
+                resolveGeneratePath(currModp, genBlockp, targetParts, i);
+                return;
             }
             // Neither a cell nor a var -> missing instance
             if (i == 1) {
@@ -500,9 +499,8 @@ class HookInsTargetFndr final {
         AstGenBlock* scopeGenBlockp = genBlockp;
         for (size_t j = boundaryIdx + 1; j < parts.size(); ++j) {
             const auto [name, idx] = parseComponent(parts[j]);
-            AstGenBlock* const nextp
-                = idx ? genBlockpChild(scopeGenBlockp->itemsp(), genBlockName(name, idx.value()))
-                      : nullptr;
+            AstGenBlock* const nextp = genBlockpChild(
+                scopeGenBlockp->itemsp(), idx ? genBlockName(name, idx.value()) : name);
             if (!nextp) {
                 scopeGenBlockp->fileline()->v3error(
                     "DPI-hook insertion of target '"

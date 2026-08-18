@@ -14,4 +14,3 @@ insert_dpihook -callback "instrument_var" -var "top_module.a3.b1.out"
 insert_dpihook -callback "instrument_var" -var "top_module.a1.b3.out"
 
 insert_dpihook -callback "instrument_var" -var "top_module.a1.b1.clk"
-

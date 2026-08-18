@@ -41,6 +41,9 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 // array is sized to this many slots, and the loop variable indexing into it is sized to match.
 static constexpr int DPIHOOK_MAX_TARGETS = 4;
 static constexpr int DPIHOOK_MAX_TARGETS_BITS = 2;  // ceil(log2(DPIHOOK_MAX_TARGETS))
+// Widest value a DPI function may return (IEEE 1800 35.5.5) (wider targets use
+// a task with an output argument instead)
+static constexpr int DPIHOOK_MAX_FUNC_WIDTH = 64;
 
 struct SelResEntry final {
     AstVar* drivingSelResp = nullptr;
@@ -255,13 +258,6 @@ static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
 //##################################################################################
 // Shared helpers for naming generate-block scopes and the cells inside them
 
-static string genBlockSourceName(const string& name) {
-    const size_t bra = name.find("__BRA__");
-    if (bra == string::npos) return name;
-    const size_t ket = name.find("__KET__", bra);
-    if (ket == string::npos) return name;
-    return name.substr(0, bra) + "[" + name.substr(bra + 7, ket - (bra + 7)) + "]";
-}
 static AstNode* getParentp(const AstNode* nodep) {
     while (AstNode* const backp = nodep->backp()) {
         if (backp->nextp() == nodep) {
@@ -277,30 +273,14 @@ static AstNodeModule* cellOwnerModp(const AstCell* cellp) {
         if (AstNodeModule* const modp = VN_CAST(parentp, NodeModule)) return modp;
     return nullptr;
 }
-static string cellPathName(const AstCell* cellp) {
+static string cellFlatName(const AstCell* cellp) {
     string name = cellp->name();
     for (AstNode* parentp = getParentp(cellp); parentp; parentp = getParentp(parentp)) {
         if (VN_IS(parentp, NodeModule)) break;
         if (const AstGenBlock* const genp = VN_CAST(parentp, GenBlock))
-            if (!genp->implied()) name = genBlockSourceName(genp->name()) + "." + name;
+            if (!genp->implied()) name = genp->name() + "__DOT__" + name;
     }
     return name;
-}
-static string sanitizeName(const string& path) {
-    string s;
-    for (const char c : path) {
-        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-            || c == '_') {
-            s += c;
-        } else if (c == '.') {
-            s += "__";
-        } else if (c == '[') {
-            s += '_';
-        } else if (c != ']') {
-            s += '_';
-        }
-    }
-    return s;
 }
 
 //##################################################################################
@@ -1169,80 +1149,75 @@ class HookPathRouter final {
         const int nextIdx = idx + 1;  // Increase index by one to account for this variable
                                       // referencing the next module/instance
         for (AstCell* cellp : m_insTarget.cellps) {
-            if (cellOwnerModp(cellp) == modp) {
-                {
-                    const string cellPath = cellPathName(cellp);
-                    // Add Instance Variable
-                    const int targetParts
-                        = m_insTarget.modps.size();  // Target part amount for left range value
-                    AstRange* const rangep
-                        = new AstRange{modp->fileline(), targetParts - nextIdx, 0};
-                    AstUnpackArrayDType* const partsDTypep = new AstUnpackArrayDType{
-                        modp->fileline(), m_dtypeCache.stringDTypep, rangep};
-                    partsDTypep->isCompound(true);
-                    AstUnpackArrayDType* const pathsDTypep = new AstUnpackArrayDType{
-                        modp->fileline(), partsDTypep,
-                        new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
-                    pathsDTypep->isCompound(true);
-                    pathsDTypep->refDTypep(partsDTypep);
-                    AstVar* const instPathVarp
-                        = new AstVar{modp->fileline(), VVarType::VAR,
-                                     "DPIPATH_" + sanitizeName(cellPath), pathsDTypep};
-                    instPathVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-                    typeTablep->addTypesp(partsDTypep);
-                    typeTablep->addTypesp(pathsDTypep);
-                    modp->addStmtsp(instPathVarp);
-                    instPathVarps[cellp] = instPathVarp;
-                    // Add Case Item
-                    AstConst* const constPackStringp = new AstConst{
-                        modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
-                    AstCvtPackString* const cvtPackStringp
-                        = new AstCvtPackString{modp->fileline(), constPackStringp};
-                    cvtPackStringp->dtypep(m_dtypeCache.stringDTypep);
-                    AstSel* const selp
-                        = new AstSel{modp->fileline(), loopVarRefp->cloneTree(false),
-                                     new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
-                    AstVarRef* const hookPathRefp
-                        = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
-                    AstArraySel* const partSelp
-                        = new AstArraySel{modp->fileline(), hookPathRefp, selp};
-                    if (!m_dtypeCache.partArraySelDTypep) {
-                        AstUnpackArrayDType* const partSelDTypep = new AstUnpackArrayDType{
-                            modp->fileline(), m_dtypeCache.stringDTypep,
-                            new AstRange{modp->fileline(), targetParts - idx, 0}};
-                        partSelDTypep->isCompound(true);
-                        typeTablep->addTypesp(partSelDTypep);
-                        m_dtypeCache.partArraySelDTypep = partSelDTypep;
-                    }
-                    partSelp->dtypep(m_dtypeCache.partArraySelDTypep);
-                    AstSliceSel* const sliceSelp = new AstSliceSel{
-                        modp->fileline(), partSelp, VNumRange{targetParts - idx, 1}};
-                    AstRange* const sliceSelRangep
-                        = new AstRange{modp->fileline(), targetParts - idx, 1};
-                    AstUnpackArrayDType* const sliceSelDTypep = new AstUnpackArrayDType{
-                        modp->fileline(), m_dtypeCache.stringDTypep, sliceSelRangep};
-                    sliceSelDTypep->isCompound(true);
-                    sliceSelp->dtypep(sliceSelDTypep);
-                    typeTablep->addTypesp(sliceSelDTypep);
-                    AstVarRef* const instPathVarRefWp
-                        = new AstVarRef{modp->fileline(), instPathVarp, VAccess::WRITE};
-                    AstArraySel* const arraySelp = new AstArraySel{
-                        modp->fileline(), instPathVarRefWp, selp->cloneTree(false)};
-                    arraySelp->dtypep(partsDTypep);
-                    AstAssign* const assignp
-                        = new AstAssign{modp->fileline(), arraySelp, sliceSelp};
-                    if (targetParts - idx == 1) {
-                        AstCaseItem* const caseItemp
-                            = new AstCaseItem{modp->fileline(), cvtPackStringp, assignp};
-                        casep->addItemsp(caseItemp);
-                        continue;
-                    }
-                    AstBegin* const beginp = new AstBegin{modp->fileline(), "", assignp, false};
-                    AstCaseItem* const caseItemp
-                        = new AstCaseItem{modp->fileline(), cvtPackStringp, beginp};
-                    casep->addItemsp(caseItemp);
-                }
+            if (cellOwnerModp(cellp) != modp) continue;
+            const string cellFlatNm = cellFlatName(cellp);
+            const string cellPath = AstNode::prettyName(cellFlatNm);
+            // Add Instance Variable
+            const int targetParts
+                = m_insTarget.modps.size();  // Target part amount for left range value
+            AstRange* const rangep = new AstRange{modp->fileline(), targetParts - nextIdx, 0};
+            AstUnpackArrayDType* const partsDTypep
+                = new AstUnpackArrayDType{modp->fileline(), m_dtypeCache.stringDTypep, rangep};
+            partsDTypep->isCompound(true);
+            AstUnpackArrayDType* const pathsDTypep = new AstUnpackArrayDType{
+                modp->fileline(), partsDTypep,
+                new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
+            pathsDTypep->isCompound(true);
+            pathsDTypep->refDTypep(partsDTypep);
+            AstVar* const instPathVarp = new AstVar{modp->fileline(), VVarType::VAR,
+                                                    "DPIPATH_" + cellFlatNm, pathsDTypep};
+            instPathVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+            typeTablep->addTypesp(partsDTypep);
+            typeTablep->addTypesp(pathsDTypep);
+            modp->addStmtsp(instPathVarp);
+            instPathVarps[cellp] = instPathVarp;
+            // Add Case Item
+            AstConst* const constPackStringp
+                = new AstConst{modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
+            AstCvtPackString* const cvtPackStringp
+                = new AstCvtPackString{modp->fileline(), constPackStringp};
+            cvtPackStringp->dtypep(m_dtypeCache.stringDTypep);
+            AstSel* const selp
+                = new AstSel{modp->fileline(), loopVarRefp->cloneTree(false),
+                             new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
+            AstVarRef* const hookPathRefp
+                = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
+            AstArraySel* const partSelp = new AstArraySel{modp->fileline(), hookPathRefp, selp};
+            if (!m_dtypeCache.partArraySelDTypep) {
+                AstUnpackArrayDType* const partSelDTypep = new AstUnpackArrayDType{
+                    modp->fileline(), m_dtypeCache.stringDTypep,
+                    new AstRange{modp->fileline(), targetParts - idx, 0}};
+                partSelDTypep->isCompound(true);
+                typeTablep->addTypesp(partSelDTypep);
+                m_dtypeCache.partArraySelDTypep = partSelDTypep;
             }
+            partSelp->dtypep(m_dtypeCache.partArraySelDTypep);
+            // Element [0] is the path part used by the case match, so forward remains [hi:1]
+            AstSliceSel* const sliceSelp
+                = new AstSliceSel{modp->fileline(), partSelp, VNumRange{targetParts - idx, 1}};
+            AstRange* const sliceSelRangep = new AstRange{modp->fileline(), targetParts - idx, 1};
+            AstUnpackArrayDType* const sliceSelDTypep = new AstUnpackArrayDType{
+                modp->fileline(), m_dtypeCache.stringDTypep, sliceSelRangep};
+            sliceSelDTypep->isCompound(true);
+            sliceSelp->dtypep(sliceSelDTypep);
+            typeTablep->addTypesp(sliceSelDTypep);
+            AstVarRef* const instPathVarRefWp
+                = new AstVarRef{modp->fileline(), instPathVarp, VAccess::WRITE};
+            AstArraySel* const arraySelp
+                = new AstArraySel{modp->fileline(), instPathVarRefWp, selp->cloneTree(false)};
+            arraySelp->dtypep(partsDTypep);
+            AstAssign* const assignp = new AstAssign{modp->fileline(), arraySelp, sliceSelp};
+            // Single remaining part -> instance is last jump
+            if (targetParts - idx == 1) {
+                AstCaseItem* const caseItemp
+                    = new AstCaseItem{modp->fileline(), cvtPackStringp, assignp};
+                casep->addItemsp(caseItemp);
+                continue;
+            }
+            AstBegin* const beginp = new AstBegin{modp->fileline(), "", assignp, false};
+            AstCaseItem* const caseItemp
+                = new AstCaseItem{modp->fileline(), cvtPackStringp, beginp};
+            casep->addItemsp(caseItemp);
         }
     }
     void addCaseIdPin(AstCell* cellp, int idx, const std::vector<AstVar*>& dpihookCaseIdps) {
@@ -1621,7 +1596,7 @@ class DPIOverrideBuilder final {
             = m_targetEntry.dpiHookedVarp ? m_targetEntry.dpiHookedVarp : m_targetEntry.origVarp;
         const string callback = m_targetEntry.callback;
         if (targetVarp->basicp()->isLiteralType() || targetVarp->basicp()->implicit()) {
-            if (targetVarp->width() > 64) {
+            if (targetVarp->width() > DPIHOOK_MAX_FUNC_WIDTH) {
                 AstTask* const taskp = new AstTask{m_targetModp->fileline(), callback, nullptr};
                 AstVar* const resultp = new AstVar{m_targetModp->fileline(), VVarType::PORT,
                                                    "result", targetVarp->dtypep()};
@@ -1698,7 +1673,7 @@ class DPIOverrideBuilder final {
             kwd = VBasicDTypeKwd::SHORTINT;
         } else if (rangeValue <= 32) {
             kwd = VBasicDTypeKwd::INT;
-        } else if (rangeValue <= 64) {
+        } else if (rangeValue <= DPIHOOK_MAX_FUNC_WIDTH) {
             kwd = VBasicDTypeKwd::LONGINT;
         } else {
             // Add Warning?

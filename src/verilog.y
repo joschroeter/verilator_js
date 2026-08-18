@@ -8466,11 +8466,11 @@ vltItem:
                                 V3Control::addHookInsCfg($<fl>1, *$3, *$5);
                         }
         |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING yVLT_D_BITPOS yaINTNUM
-                        { v3Global.setInsDPIHooks ();
+                        { v3Global.setInsDPIHooks();
                                 V3Control::addHookInsCfg($<fl>1, *$3, *$5, $7->toSInt());
                         }
         |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING yVLT_D_BITRANGE yaSTRING
-                        { v3Global.setInsDPIHooks ();
+                        { v3Global.setInsDPIHooks();
                                 V3Control::addHookInsCfg($<fl>1, *$3, *$5, *$7);
                         }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile

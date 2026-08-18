@@ -45,6 +45,14 @@ struct AccessStep final {
 };
 using AccessPath = std::vector<AccessStep>;
 
+// Longest run of digits accepted in the configuration (bit position, bit
+// range bound, element index) is nine digits (always fit a 32-bit int)
+static constexpr size_t DPIHOOK_MAX_NUM_DIGITS = 9;
+inline bool isDPIHookConfigNumber(const std::string& s) {
+    return !s.empty() && s.size() <= DPIHOOK_MAX_NUM_DIGITS
+           && s.find_first_not_of("0123456789") == std::string::npos;
+}
+
 struct HookInsCfgEntry final {
     std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
     std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted

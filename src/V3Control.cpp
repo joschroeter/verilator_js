@@ -875,26 +875,32 @@ public:
             fl->v3error("Invalid bit range format: '" << bitRange << "'. Expected format 'x:y'.");
             return {std::nullopt, std::nullopt};
         }
-        const int left = std::stoi(bitRange.substr(0, pos));
-        const int right = std::stoi(bitRange.substr(pos + 1));
-        if (left < 0 || right < 0) {
-            fl->v3error("Bit positions must be non-negative integers: '" << bitRange << "'.");
-            return {std::nullopt, std::nullopt};
+        const string leftStr = bitRange.substr(0, pos);
+        const string rightStr = bitRange.substr(pos + 1);
+        // Validate before converting: stoi would throw on non-numeric or
+        // out-of-range input
+        for (const string& s : {leftStr, rightStr}) {
+            if (!isDPIHookConfigNumber(s)) {
+                fl->v3error("Bit positions must be non-negative integers: '" << bitRange << "'.");
+                return {std::nullopt, std::nullopt};
+            }
         }
+        const int left = std::stoi(leftStr);
+        const int right = std::stoi(rightStr);
         if (right > left) {
             v3warn(ASCRANGE,
                    "Ascending bit range vector: left < right of bit range: " << bitRange);
         }
         return {static_cast<uint32_t>(left), static_cast<uint32_t>(right)};
     }
-    // Helper for adding targets to the hook-insertion config map
+    // Split a target path at its last dot into the instance prefix and the
+    // variable name ("top.u.sig" -> {"top.u", "sig"})
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
-        // Check if the instrumentation config wants to insert a hook into a variable in the top
-        // module
         const auto pos = target.rfind('.');
-        if ((std::count(target.begin(), target.end(), '.') < 1)) {
+        if (pos == string::npos) {
             fl->v3error("DPI-hook insertion of target variable '"
                         << target << "' must be qualified with at least the top module");
+            return {target, ""};
         }
         const string prefix = target.substr(0, pos);
         const string varTarget = target.substr(pos + 1);
@@ -909,7 +915,7 @@ public:
             return varTarget;
         }
         const string index = varTarget.substr(open + 1, varTarget.size() - open - 2);
-        if (index.empty() || index.find_first_not_of("0123456789") != string::npos) {
+        if (!isDPIHookConfigNumber(index)) {
             fl->v3error("Element index must be a non-negative integer: '" << varTarget << "'.");
             return varTarget.substr(0, open);
         }
@@ -918,9 +924,6 @@ public:
     }
     // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
     void addHookInsCfg(FileLine* fl, const string& callback, const string& target) {
-        // Implement custom iterator to remove the last part of the target and insert it into the
-        // vector of the map If the target string is the same as one already in the map, push the
-        // var to the vector
         const auto result = splitPrefixAndVar(fl, target);
         const auto prefix = result.first;
         AccessPath accessPath;

@@ -5,5 +5,5 @@
 %Error: t/t_ins_dpi_hook_bad_array.v:28:8: DPI-hook insertion of target 'top_module.s' could not find 'var' in '__.instance.var'
    28 | module sub (
       |        ^~~
-%Error: Incomplete hook-insertion configuration for target 'top_module.s.mem'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Incomplete hook-insertion configuration for target 'top_module.s.mem'; see the error above
 %Error: Exiting due to

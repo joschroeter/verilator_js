@@ -474,6 +474,7 @@ class HookInsTargetFndr final {
         const auto open = part.find('[');
         if (open == string::npos || part.back() != ']') return {part, std::nullopt};
         const string index = part.substr(open + 1, part.size() - open - 2);
+        if (!isDPIHookConfigNumber(index)) return {part, std::nullopt};
         return {part.substr(0, open), static_cast<uint32_t>(std::stoul(index))};
     }
     static bool partOfAssign(const AstNode* nodep) {
@@ -2351,9 +2352,7 @@ public:
             if (target->error) {
                 m_netlistp->fileline()->v3error(
                     "Incomplete hook-insertion configuration for target '"
-                    << key
-                    << "'. Please check previous Errors from V3Instrument:findTargets and ensure"
-                    << " all necessary components are defined correctly.");
+                    << key << "'; see the error above");
                 return;
             }
             // PathModule anpassen
@@ -2365,10 +2364,7 @@ public:
                 if (!entry.found) {
                     m_netlistp->fileline()->v3error(
                         "Incomplete hook-insertion configuration for target '"
-                        << key << "." << entry.varTarget
-                        << "'. Please check previous Errors from V3Instrument:findTargets and "
-                           "ensure"
-                        << " all necessary components are defined correctly.");
+                        << key << "." << entry.varTarget << "'; see the error above");
                     return;
                 }
             }

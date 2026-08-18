@@ -2,5 +2,5 @@
    33 |   logic [7:0] bigmem [512];   
       |               ^~~~~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: Incomplete hook-insertion configuration for target 'top_module.s.bigmem'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Incomplete hook-insertion configuration for target 'top_module.s.bigmem'; see the error above
 %Error: Exiting due to

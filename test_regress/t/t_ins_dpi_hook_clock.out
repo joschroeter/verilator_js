@@ -5,5 +5,5 @@
 %Error: t/t_ins_dpi_hook_clock.v:25:8: DPI-hook insertion of target 'top_module.a1' could not find 'var' in '__.instance.var'
    25 | module module_a (
       |        ^~~~~~~~
-%Error: Incomplete hook-insertion configuration for target 'top_module.a1.clk'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Incomplete hook-insertion configuration for target 'top_module.a1.clk'; see the error above
 %Error: Exiting due to

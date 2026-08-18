@@ -11,5 +11,5 @@
 %Error: t/t_ins_dpi_hook.v:8:8: DPI-hook insertion of target 'top_module.a3.b1' could not find initial 'instance' in 'topModule.instance.__'
     8 | module top_module;
       |        ^~~~~~~~~~
-%Error: Incomplete hook-insertion configuration for target 'top_module.a1.b1.clk'. Please check previous Errors from V3Instrument:findTargets and ensure all necessary components are defined correctly.
+%Error: Incomplete hook-insertion configuration for target 'top_module.a1.b1.clk'; see the error above
 %Error: Exiting due to

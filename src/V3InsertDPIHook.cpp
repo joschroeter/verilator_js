@@ -253,6 +253,57 @@ static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
 }
 
 //##################################################################################
+// Shared helpers for naming generate-block scopes and the cells inside them
+
+static string genBlockSourceName(const string& name) {
+    const size_t bra = name.find("__BRA__");
+    if (bra == string::npos) return name;
+    const size_t ket = name.find("__KET__", bra);
+    if (ket == string::npos) return name;
+    return name.substr(0, bra) + "[" + name.substr(bra + 7, ket - (bra + 7)) + "]";
+}
+static AstNode* getParentp(const AstNode* nodep) {
+    while (AstNode* const backp = nodep->backp()) {
+        if (backp->nextp() == nodep) {
+            nodep = backp;
+            continue;
+        }
+        return backp;
+    }
+    return nullptr;
+}
+static AstNodeModule* cellOwnerModp(const AstCell* cellp) {
+    for (AstNode* parentp = getParentp(cellp); parentp; parentp = getParentp(parentp))
+        if (AstNodeModule* const modp = VN_CAST(parentp, NodeModule)) return modp;
+    return nullptr;
+}
+static string cellPathName(const AstCell* cellp) {
+    string name = cellp->name();
+    for (AstNode* parentp = getParentp(cellp); parentp; parentp = getParentp(parentp)) {
+        if (VN_IS(parentp, NodeModule)) break;
+        if (const AstGenBlock* const genp = VN_CAST(parentp, GenBlock))
+            if (!genp->implied()) name = genBlockSourceName(genp->name()) + "." + name;
+    }
+    return name;
+}
+static string sanitizeName(const string& path) {
+    string s;
+    for (const char c : path) {
+        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || c == '_') {
+            s += c;
+        } else if (c == '.') {
+            s += "__";
+        } else if (c == '[') {
+            s += '_';
+        } else if (c != ']') {
+            s += '_';
+        }
+    }
+    return s;
+}
+
+//##################################################################################
 // Report whether a variable is used as a clock (or an asynchronous reset)
 
 class ClockUseVisitor final : public VNVisitorConst {
@@ -372,12 +423,6 @@ class HookInsTargetFndr final {
         if (it != m_insCfg.end()) it->second.cellps.push_back(cellp);
     }
     // NAVIGATION AND COLLECTION
-    static AstCell* targetChildCell(AstNodeModule* modp, const string& name) {
-        for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp())
-            if (AstCell* const cellp = VN_CAST(stmtp, Cell))
-                if (cellp->name() == name) return cellp;
-        return nullptr;
-    }
     static AstVar* targetChildVar(AstNodeModule* modp, const string& name) {
         for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp())
             if (AstVar* const varp = VN_CAST(stmtp, Var))
@@ -392,10 +437,35 @@ class HookInsTargetFndr final {
         if (AstGenBlock* const genp = VN_CAST(scopep, GenBlock)) return genp->itemsp();
         return nullptr;
     }
-    static AstGenBlock* genBlockpChild(AstNode* stmtsp, const string& name) {
-        for (AstNode* stmtp = stmtsp; stmtp; stmtp = stmtp->nextp())
-            if (AstGenBlock* const genp = VN_CAST(stmtp, GenBlock))
+    static AstCell* scopeChildCell(AstNode* scopep, const string& name) {
+        for (AstNode* declsp = scopeDeclsp(scopep); declsp; declsp = declsp->nextp()) {
+            if (AstCell* const cellp = VN_CAST(declsp, Cell))
+                if (cellp->name() == name) return cellp;
+            if (AstGenBlock* const genp = VN_CAST(declsp, GenBlock))
+                if (genp->implied())
+                    if (AstCell* const foundp = scopeChildCell(genp, name)) return foundp;
+        }
+        return nullptr;
+    }
+    static AstVar* scopeChildVar(AstNode* scopep, const string& name) {
+        for (AstNode* declsp = scopeDeclsp(scopep); declsp; declsp = declsp->nextp()) {
+            if (AstVar* const varp = VN_CAST(declsp, Var))
+                if (varp->name() == name) return varp;
+            if (AstGenBlock* const genp = VN_CAST(declsp, GenBlock))
+                if (genp->implied())
+                    if (AstVar* const foundp = scopeChildVar(genp, name)) return foundp;
+        }
+        return nullptr;
+    }
+    static AstGenBlock* genBlockpChild(AstNode* nodep, const string& name) {
+        for (AstNode* nextp = nodep; nextp; nextp = nextp->nextp()) {
+            if (AstGenBlock* const genp = VN_CAST(nextp, GenBlock)) {
                 if (genp->name() == name) return genp;
+                if (genp->implied())
+                    if (AstGenBlock* const foundp = genBlockpChild(genp->itemsp(), name))
+                        return foundp;
+            }
+        }
         return nullptr;
     }
     // Split a path component into its name and optional array index: "arr[2]" ->
@@ -426,36 +496,53 @@ class HookInsTargetFndr final {
             return;
         }
         AstNodeModule* currModp = topp;
+        AstNode* currScopep = topp;
+        string genScope;
         m_currHier = targetParts.front();
         for (size_t i = 1; i < targetParts.size(); ++i) {
             const auto [partName, partIdx] = parseComponent(targetParts[i]);
             // Since cell hops into the child module, an indexed component ("u[i]") is
             // never a cell here
-            AstCell* const targetCellp = partIdx ? nullptr : targetChildCell(currModp, partName);
+            AstCell* const targetCellp = partIdx ? nullptr : scopeChildCell(currScopep, partName);
             if (targetCellp && targetCellp->modp()) {
                 AstNodeModule* const childModp = targetCellp->modp();
                 if (AstModule* const asModp = VN_CAST(currModp, Module))
                     setModules(asModp, prefix);
-                for (AstNode* stmtp = currModp->stmtsp(); stmtp; stmtp = stmtp->nextp())
-                    if (AstCell* const cellp = VN_CAST(stmtp, Cell))
-                        if (cellp->modp() == childModp) setCells(cellp, prefix);
+                currModp->foreach([&](AstNode* np) {
+                    if (AstCell* const cellp = VN_CAST(np, Cell))
+                        if (cellp->modp() == childModp && cellOwnerModp(cellp) == currModp)
+                            setCells(cellp, prefix);
+                });
                 m_currHier += "." + targetParts[i];
                 currModp = childModp;
+                currScopep = childModp;
+                genScope.clear();  // crossed a module boundary
                 continue;
             }
             // Not a cell: if it names a variable, this is the instance/var boundary
             // and the remaining components are a member/index access path into it
-            if (targetChildVar(currModp, partName)) {
+            if (scopeChildVar(currScopep, partName)) {
+                if (!genScope.empty()) {
+                    currScopep->fileline()->v3error(
+                        "DPI-hook insertion of target '"
+                        << m_target
+                        << "': a member path into a variable of a generate block is not"
+                           " supported");
+                    m_error = true;
+                    return;
+                }
                 resolveMemberPath(currModp, targetParts, i);
                 return;
             }
             // An indexed component may be an unrolled generate-loop iteration
             // ("lane[0]"): descend into the generate block and pin the var there
             if (AstGenBlock* const genBlockp
-                = genBlockpChild(currModp->stmtsp(),
+                = genBlockpChild(scopeDeclsp(currScopep),
                                  partIdx ? genBlockName(partName, partIdx.value()) : partName)) {
-                resolveGeneratePath(currModp, genBlockp, targetParts, i);
-                return;
+                currScopep = genBlockp;
+                genScope += (genScope.empty() ? "" : ".") + targetParts[i];
+                m_currHier += "." + targetParts[i];
+                continue;
             }
             // Neither a cell nor a var -> missing instance
             if (i == 1) {
@@ -485,49 +572,15 @@ class HookInsTargetFndr final {
             m_error = true;
             return;
         }
-        setOrigModule(origModp, prefix);
-        m_targetScopep = origModp;
-        collectTargetsInModule(origModp);
-    }
-    void resolveGeneratePath(AstNodeModule* modp, AstGenBlock* genBlockp,
-                             const std::deque<string>& parts, size_t boundaryIdx) {
-        AstModule* const origModp = VN_CAST(modp, Module);
-        if (!origModp) {
-            modp->fileline()->v3error("DPI-hook insertion of target '"
-                                      << m_target
-                                      << "' resolves to a non-module container, which is not"
-                                         " supported");
-            m_error = true;
-            return;
-        }
-        m_currHier += "." + parts[boundaryIdx];
-        AstGenBlock* scopeGenBlockp = genBlockp;
-        for (size_t j = boundaryIdx + 1; j < parts.size(); ++j) {
-            const auto [name, idx] = parseComponent(parts[j]);
-            AstGenBlock* const nextp = genBlockpChild(
-                scopeGenBlockp->itemsp(), idx ? genBlockName(name, idx.value()) : name);
-            if (!nextp) {
-                scopeGenBlockp->fileline()->v3error(
-                    "DPI-hook insertion of target '"
-                    << m_target
-                    << "': only nested generate blocks are supported after a generate"
-                       " block (no instances or member paths yet)");
-                m_error = true;
-                return;
-            }
-            scopeGenBlockp = nextp;
-            m_currHier += "." + parts[j];
-        }
         // Record the generate-block prefix in source notation ("lane[0]") so the run-time
         // bind key can distinguish the unrolled copies
-        string genScope;
-        for (size_t j = boundaryIdx; j < parts.size(); ++j)
-            genScope += (j == boundaryIdx ? "" : ".") + parts[j];
-        const auto it = m_insCfg.find(m_target);
-        if (it != m_insCfg.end())
-            for (auto& entry : it->second.entries) entry.genScope = genScope;
-        setOrigModule(origModp, m_target);
-        m_targetScopep = scopeGenBlockp;
+        if (!genScope.empty()) {
+            const auto it = m_insCfg.find(m_target);
+            if (it != m_insCfg.end())
+                for (auto& entry : it->second.entries) entry.genScope = genScope;
+        }
+        setOrigModule(origModp, prefix);
+        m_targetScopep = currScopep;
         collectTargetsInModule(origModp);
     }
     void resolveMemberPath(AstNodeModule* modp, const std::deque<string>& parts,
@@ -1115,9 +1168,9 @@ class HookPathRouter final {
         const int nextIdx = idx + 1;  // Increase index by one to account for this variable
                                       // referencing the next module/instance
         for (AstCell* cellp : m_insTarget.cellps) {
-            for (AstNode* nodep = modp->op2p(); nodep; nodep = nodep->nextp()) {
-                AstCell* const modCellp = VN_CAST(nodep, Cell);
-                if (modCellp == cellp) {
+            if (cellOwnerModp(cellp) == modp) {
+                {
+                    const string cellPath = cellPathName(cellp);
                     // Add Instance Variable
                     const int targetParts
                         = m_insTarget.modps.size();  // Target part amount for left range value
@@ -1131,8 +1184,9 @@ class HookPathRouter final {
                         new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
                     pathsDTypep->isCompound(true);
                     pathsDTypep->refDTypep(partsDTypep);
-                    AstVar* const instPathVarp = new AstVar{
-                        modp->fileline(), VVarType::VAR, "DPIPATH_" + cellp->name(), pathsDTypep};
+                    AstVar* const instPathVarp
+                        = new AstVar{modp->fileline(), VVarType::VAR,
+                                     "DPIPATH_" + sanitizeName(cellPath), pathsDTypep};
                     instPathVarp->lifetime(VLifetime::STATIC_IMPLICIT);
                     typeTablep->addTypesp(partsDTypep);
                     typeTablep->addTypesp(pathsDTypep);
@@ -1140,7 +1194,7 @@ class HookPathRouter final {
                     instPathVarps[cellp] = instPathVarp;
                     // Add Case Item
                     AstConst* const constPackStringp = new AstConst{
-                        modp->fileline(), AstConst::VerilogStringLiteral{}, cellp->name()};
+                        modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
                     AstCvtPackString* const cvtPackStringp
                         = new AstCvtPackString{modp->fileline(), constPackStringp};
                     cvtPackStringp->dtypep(m_dtypeCache.stringDTypep);
@@ -1180,7 +1234,7 @@ class HookPathRouter final {
                         AstCaseItem* const caseItemp
                             = new AstCaseItem{modp->fileline(), cvtPackStringp, assignp};
                         casep->addItemsp(caseItemp);
-                        break;
+                        continue;
                     }
                     AstBegin* const beginp = new AstBegin{modp->fileline(), "", assignp, false};
                     AstCaseItem* const caseItemp

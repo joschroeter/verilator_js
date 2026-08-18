@@ -745,7 +745,7 @@ class HookInsTargetFndr final {
         AstVar* const mirrorp
             = new AstVar{fl, VVarType::VAR, aggVarp->name() + "__DPImirror", mirrorDTypep};
         mirrorp->lifetime(VLifetime::STATIC_IMPLICIT);
-        mirrorp->trace(true);
+        mirrorp->trace(false);
         m_targetModp->addStmtsp(mirrorp);
         // Build the pack concat {f0, f1, ...} with the first-declared member as
         // the MSB (packed-struct convention). All dtypes are set manually because
@@ -774,7 +774,7 @@ class HookInsTargetFndr final {
         clonep->origName("dpiHooked_" + mirrorp->name());
         clonep->isDPIHookInserted(true);
         clonep->varType(VVarType::VAR);
-        clonep->trace(true);
+        clonep->trace(false);
         const auto it = m_insCfg.find(m_target);
         if (it != m_insCfg.end()) {
             for (auto& e : it->second.entries) {
@@ -910,7 +910,7 @@ class HookInsTargetFndr final {
             varp->origName(leafName);
             varp->isDPIHookInserted(true);
             varp->varType(VVarType::VAR);
-            varp->trace(true);
+            varp->trace(false);
             setVarAt(entryIdx, nodep, varp, m_target);
             m_foundVarp = true;
             return;
@@ -968,7 +968,7 @@ class HookInsTargetFndr final {
         varp->origName(hookedName);
         varp->isDPIHookInserted(true);
         varp->varType(VVarType::VAR);
-        varp->trace(true);
+        varp->trace(false);
         setVarAt(entryIdx, nodep, varp, m_target);
         m_foundVarp = true;
     }
@@ -1752,7 +1752,7 @@ class DPIOverrideBuilder final {
         m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
                                targetVarp->name() + "_preHook", targetVarp->dtypep()};
         m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-        m_preVarp->trace(true);
+        m_preVarp->trace(false);
         m_targetModp->addStmtsp(m_preVarp);
         for (AstNodeAssign* assignp : m_targetEntry.assignps) {
             assignp->lhsp()->foreach([&](AstNode* nodep) {
@@ -1779,7 +1779,7 @@ class DPIOverrideBuilder final {
         m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
                                targetVarp->name() + "_preHook", targetVarp->dtypep()};
         m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-        m_preVarp->trace(true);
+        m_preVarp->trace(false);
         m_targetModp->addStmtsp(m_preVarp);
         addIfaceModportMember(m_preVarp, VDirection::OUTPUT);
         for (AstNodeVarRef* const refp : m_targetEntry.wrRefps) {
@@ -1797,7 +1797,7 @@ class DPIOverrideBuilder final {
             = new AstVar{fl, VVarType::VAR, targetVarp->name() + "_elem" + std::to_string(idx),
                          m_targetEntry.dpiHookedVarp->dtypep()};
         m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-        m_preVarp->trace(true);
+        m_preVarp->trace(false);
         m_targetModp->addStmtsp(m_preVarp);
         AstArraySel* const selp = new AstArraySel{fl, new AstVarRef{fl, targetVarp, VAccess::READ},
                                                   new AstConst{fl, idx}};
@@ -1882,7 +1882,7 @@ class DPIOverrideBuilder final {
         m_preVarp = new AstVar{fl, VVarType::VAR, hookBaseName(targetVarp) + "_leaf",
                                m_targetEntry.dpiHookedVarp->dtypep()};
         m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-        m_preVarp->trace(true);
+        m_preVarp->trace(false);
         m_targetModp->addStmtsp(m_preVarp);
         AstNodeExpr* const viewp = buildAccessChain(targetVarp, fl);
         m_viewExprp = viewp;
@@ -2069,7 +2069,7 @@ class DPIOverrideBuilder final {
         m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
                                hookBaseName(targetVarp) + "_selRes", hookedVarp->dtypep()};
         m_selResp->lifetime(VLifetime::STATIC_IMPLICIT);
-        m_selResp->trace(true);
+        m_selResp->trace(false);
         m_selResp->isDPIHookInserted(true);
         if (m_targetEntry.isAggregateMirror) {
             m_targetModp->addStmtsp(m_selResp);

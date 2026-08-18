@@ -1764,6 +1764,27 @@ class DPIOverrideBuilder final {
         m_targetEntry.assignps.clear();  // Target has no drivers left
         return true;
     }
+    bool routePinDrivers(AstVar* targetVarp) {
+        if (!targetVarp->isOutputish() || !m_targetEntry.assignps.empty()) return false;
+        std::vector<AstVarRef*> pinRefps;
+        m_targetModp->foreach([&](AstNode* nodep) {
+            AstPin* const pinp = VN_CAST(nodep, Pin);
+            if (!pinp || !pinp->exprp()) return;
+            pinp->exprp()->foreach([&](AstNode* np) {
+                AstVarRef* const vrp = VN_CAST(np, VarRef);
+                if (vrp && vrp->varp() == targetVarp && vrp->access().isWriteOrRW())
+                    pinRefps.push_back(vrp);
+            });
+        });
+        if (pinRefps.empty()) return false;
+        m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               targetVarp->name() + "_preHook", targetVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(false);
+        m_targetModp->addStmtsp(m_preVarp);
+        for (AstVarRef* const vrp : pinRefps) vrp->varp(m_preVarp);
+        return true;
+    }
     void addIfaceModportMember(AstVar* varp, VDirection::en direction) {
         AstIface* const ifacep = VN_CAST(m_targetModp, Iface);
         if (!ifacep) return;
@@ -2262,6 +2283,8 @@ public:
         insDPITaskOrFunction();
         // Reroute partial (bit-select) drivers of an output
         routePartialDrivers(targetVarp);
+        // Reroute a cell-pin driver of an output the same way
+        routePinDrivers(targetVarp);
         // Give a "var[i]" target a scalar view of the selected element
         routeElementTarget(targetVarp);
         // Give a "u.a" member/index target a scalar view of the addressed leaf

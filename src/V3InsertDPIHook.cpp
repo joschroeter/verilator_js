@@ -282,6 +282,17 @@ static string cellFlatName(const AstCell* cellp) {
     }
     return name;
 }
+static std::vector<string> cellInstFlatNames(const AstCell* cellp) {
+    const string flatName = cellFlatName(cellp);
+    const AstRange* const rangep = cellp->rangep();
+    if (!rangep) return {flatName};
+    std::vector<string> names;
+    for (int i = 0; i < rangep->elementsConst(); ++i) {
+        names.push_back(flatName + "__BRA__" + AstNode::encodeNumber(rangep->loConst() + i)
+                        + "__KET__");
+    }
+    return names;
+}
 
 //##################################################################################
 // Report whether a variable is used as a clock (or an asynchronous reset)
@@ -427,6 +438,15 @@ class HookInsTargetFndr final {
         }
         return nullptr;
     }
+    static AstCell* arrayedIfaceCell(AstNode* scopep, const string& name, uint32_t index) {
+        AstCell* const cellp = scopeChildCell(scopep, name);
+        if (!cellp || !cellp->rangep() || !VN_IS(cellp->modp(), Iface)) return nullptr;
+        const AstRange* const rangep = cellp->rangep();
+        if (rangep->nextp()) return nullptr;
+        const int lo = rangep->loConst();
+        const int idx = static_cast<int>(index);
+        return (idx >= lo && idx < lo + rangep->elementsConst()) ? cellp : nullptr;
+    }
     static AstVar* scopeChildVar(AstNode* scopep, const string& name) {
         for (AstNode* declsp = scopeDeclsp(scopep); declsp; declsp = declsp->nextp()) {
             if (AstVar* const varp = VN_CAST(declsp, Var))
@@ -482,9 +502,9 @@ class HookInsTargetFndr final {
         m_currHier = targetParts.front();
         for (size_t i = 1; i < targetParts.size(); ++i) {
             const auto [partName, partIdx] = parseComponent(targetParts[i]);
-            // Since cell hops into the child module, an indexed component ("u[i]") is
-            // never a cell here
-            AstCell* const targetCellp = partIdx ? nullptr : scopeChildCell(currScopep, partName);
+            AstCell* const targetCellp
+                = partIdx ? arrayedIfaceCell(currScopep, partName, partIdx.value())
+                          : scopeChildCell(currScopep, partName);
             if (targetCellp && targetCellp->modp()) {
                 AstNodeModule* const childModp = targetCellp->modp();
                 if (AstModule* const asModp = VN_CAST(currModp, Module))
@@ -604,20 +624,6 @@ class HookInsTargetFndr final {
     void resolveInterfacePath(AstIface* ifacep, const string& prefix) {
         const HookInsertTarget* const targetp = currTargetp();
         if (!targetp) return;
-        int nIfaceCells = 0;
-        m_netlistp->foreach([&](AstNode* np) {
-            const AstCell* const cellp = VN_CAST(np, Cell);
-            if (cellp && cellp->modp() == ifacep) ++nIfaceCells;
-        });
-        if (nIfaceCells > 1) {
-            ifacep->fileline()->v3error("DPI-hook insertion of target '"
-                                        << prefix << "': interface '" << ifacep->name() << "' has "
-                                        << nIfaceCells
-                                        << " instances; hooking signals of a multiply-instantiated"
-                                           " interface is not supported");
-            m_error = true;
-            return;
-        }
         setIface(ifacep, m_target);
         for (size_t ei = 0; ei < targetp->entries.size(); ++ei) {
             const HookInsertEntry& entry = targetp->entries[ei];
@@ -1151,80 +1157,86 @@ class HookPathRouter final {
     }
     void insertCaseItems(AstModule* modp, AstCase* casep, AstVar* hookPathp,
                          AstVarRef* loopVarRefp, int idx,
-                         std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                         std::map<string, AstVar*>& instPathVarps) {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         const int nextIdx = idx + 1;  // Increase index by one to account for this variable
                                       // referencing the next module/instance
         for (AstCell* cellp : m_insTarget.cellps) {
             if (cellOwnerModp(cellp) != modp) continue;
-            const string cellFlatNm = cellFlatName(cellp);
-            const string cellPath = AstNode::prettyName(cellFlatNm);
-            // Add Instance Variable
-            const int targetParts
-                = m_insTarget.modps.size();  // Target part amount for left range value
-            AstRange* const rangep = new AstRange{modp->fileline(), targetParts - nextIdx, 0};
-            AstUnpackArrayDType* const partsDTypep
-                = new AstUnpackArrayDType{modp->fileline(), m_dtypeCache.stringDTypep, rangep};
-            partsDTypep->isCompound(true);
-            AstUnpackArrayDType* const pathsDTypep = new AstUnpackArrayDType{
-                modp->fileline(), partsDTypep,
-                new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
-            pathsDTypep->isCompound(true);
-            pathsDTypep->refDTypep(partsDTypep);
-            AstVar* const instPathVarp = new AstVar{modp->fileline(), VVarType::VAR,
-                                                    "DPIPATH_" + cellFlatNm, pathsDTypep};
-            instPathVarp->lifetime(VLifetime::STATIC_IMPLICIT);
-            typeTablep->addTypesp(partsDTypep);
-            typeTablep->addTypesp(pathsDTypep);
-            modp->addStmtsp(instPathVarp);
-            instPathVarps[cellp] = instPathVarp;
-            // Add Case Item
-            AstConst* const constPackStringp
-                = new AstConst{modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
-            AstCvtPackString* const cvtPackStringp
-                = new AstCvtPackString{modp->fileline(), constPackStringp};
-            cvtPackStringp->dtypep(m_dtypeCache.stringDTypep);
-            AstSel* const selp
-                = new AstSel{modp->fileline(), loopVarRefp->cloneTree(false),
-                             new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
-            AstVarRef* const hookPathRefp
-                = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
-            AstArraySel* const partSelp = new AstArraySel{modp->fileline(), hookPathRefp, selp};
-            if (!m_dtypeCache.partArraySelDTypep) {
-                AstUnpackArrayDType* const partSelDTypep = new AstUnpackArrayDType{
-                    modp->fileline(), m_dtypeCache.stringDTypep,
-                    new AstRange{modp->fileline(), targetParts - idx, 0}};
-                partSelDTypep->isCompound(true);
-                typeTablep->addTypesp(partSelDTypep);
-                m_dtypeCache.partArraySelDTypep = partSelDTypep;
-            }
-            partSelp->dtypep(m_dtypeCache.partArraySelDTypep);
-            // Element [0] is the path part used by the case match, so forward remains [hi:1]
-            AstSliceSel* const sliceSelp
-                = new AstSliceSel{modp->fileline(), partSelp, VNumRange{targetParts - idx, 1}};
-            AstRange* const sliceSelRangep = new AstRange{modp->fileline(), targetParts - idx, 1};
-            AstUnpackArrayDType* const sliceSelDTypep = new AstUnpackArrayDType{
-                modp->fileline(), m_dtypeCache.stringDTypep, sliceSelRangep};
-            sliceSelDTypep->isCompound(true);
-            sliceSelp->dtypep(sliceSelDTypep);
-            typeTablep->addTypesp(sliceSelDTypep);
-            AstVarRef* const instPathVarRefWp
-                = new AstVarRef{modp->fileline(), instPathVarp, VAccess::WRITE};
-            AstArraySel* const arraySelp
-                = new AstArraySel{modp->fileline(), instPathVarRefWp, selp->cloneTree(false)};
-            arraySelp->dtypep(partsDTypep);
-            AstAssign* const assignp = new AstAssign{modp->fileline(), arraySelp, sliceSelp};
-            // Single remaining part -> instance is last jump
-            if (targetParts - idx == 1) {
+            const std::vector<string> instNames = VN_IS(cellp->modp(), Iface)
+                                                      ? cellInstFlatNames(cellp)
+                                                      : std::vector<string>{cellFlatName(cellp)};
+            for (const string& cellFlatNm : instNames) {
+                const string cellPath = AstNode::prettyName(cellFlatNm);
+                // Add Instance Variable
+                const int targetParts
+                    = m_insTarget.modps.size();  // Target part amount for left range value
+                AstRange* const rangep = new AstRange{modp->fileline(), targetParts - nextIdx, 0};
+                AstUnpackArrayDType* const partsDTypep
+                    = new AstUnpackArrayDType{modp->fileline(), m_dtypeCache.stringDTypep, rangep};
+                partsDTypep->isCompound(true);
+                AstUnpackArrayDType* const pathsDTypep = new AstUnpackArrayDType{
+                    modp->fileline(), partsDTypep,
+                    new AstRange{modp->fileline(), DPIHOOK_MAX_TARGETS - 1, 0}};
+                pathsDTypep->isCompound(true);
+                pathsDTypep->refDTypep(partsDTypep);
+                AstVar* const instPathVarp = new AstVar{modp->fileline(), VVarType::VAR,
+                                                        "DPIPATH_" + cellFlatNm, pathsDTypep};
+                instPathVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+                typeTablep->addTypesp(partsDTypep);
+                typeTablep->addTypesp(pathsDTypep);
+                modp->addStmtsp(instPathVarp);
+                instPathVarps[cellFlatNm] = instPathVarp;
+                // Add Case Item
+                AstConst* const constPackStringp
+                    = new AstConst{modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
+                AstCvtPackString* const cvtPackStringp
+                    = new AstCvtPackString{modp->fileline(), constPackStringp};
+                cvtPackStringp->dtypep(m_dtypeCache.stringDTypep);
+                AstSel* const selp
+                    = new AstSel{modp->fileline(), loopVarRefp->cloneTree(false),
+                                 new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
+                AstVarRef* const hookPathRefp
+                    = new AstVarRef{modp->fileline(), hookPathp, VAccess::READ};
+                AstArraySel* const partSelp
+                    = new AstArraySel{modp->fileline(), hookPathRefp, selp};
+                if (!m_dtypeCache.partArraySelDTypep) {
+                    AstUnpackArrayDType* const partSelDTypep = new AstUnpackArrayDType{
+                        modp->fileline(), m_dtypeCache.stringDTypep,
+                        new AstRange{modp->fileline(), targetParts - idx, 0}};
+                    partSelDTypep->isCompound(true);
+                    typeTablep->addTypesp(partSelDTypep);
+                    m_dtypeCache.partArraySelDTypep = partSelDTypep;
+                }
+                partSelp->dtypep(m_dtypeCache.partArraySelDTypep);
+                // Element [0] is the path part used by the case match, so forward remains [hi:1]
+                AstSliceSel* const sliceSelp
+                    = new AstSliceSel{modp->fileline(), partSelp, VNumRange{targetParts - idx, 1}};
+                AstRange* const sliceSelRangep
+                    = new AstRange{modp->fileline(), targetParts - idx, 1};
+                AstUnpackArrayDType* const sliceSelDTypep = new AstUnpackArrayDType{
+                    modp->fileline(), m_dtypeCache.stringDTypep, sliceSelRangep};
+                sliceSelDTypep->isCompound(true);
+                sliceSelp->dtypep(sliceSelDTypep);
+                typeTablep->addTypesp(sliceSelDTypep);
+                AstVarRef* const instPathVarRefWp
+                    = new AstVarRef{modp->fileline(), instPathVarp, VAccess::WRITE};
+                AstArraySel* const arraySelp
+                    = new AstArraySel{modp->fileline(), instPathVarRefWp, selp->cloneTree(false)};
+                arraySelp->dtypep(partsDTypep);
+                AstAssign* const assignp = new AstAssign{modp->fileline(), arraySelp, sliceSelp};
+                // Single remaining part -> instance is last jump
+                if (targetParts - idx == 1) {
+                    AstCaseItem* const caseItemp
+                        = new AstCaseItem{modp->fileline(), cvtPackStringp, assignp};
+                    casep->addItemsp(caseItemp);
+                    continue;
+                }
+                AstBegin* const beginp = new AstBegin{modp->fileline(), "", assignp, false};
                 AstCaseItem* const caseItemp
-                    = new AstCaseItem{modp->fileline(), cvtPackStringp, assignp};
+                    = new AstCaseItem{modp->fileline(), cvtPackStringp, beginp};
                 casep->addItemsp(caseItemp);
-                continue;
             }
-            AstBegin* const beginp = new AstBegin{modp->fileline(), "", assignp, false};
-            AstCaseItem* const caseItemp
-                = new AstCaseItem{modp->fileline(), cvtPackStringp, beginp};
-            casep->addItemsp(caseItemp);
         }
     }
     void addCaseIdPin(AstCell* cellp, int idx, const std::vector<AstVar*>& dpihookCaseIdps) {
@@ -1239,7 +1251,7 @@ class HookPathRouter final {
         cellp->addPinsp(pinp);
     }
     void addPathFilter(AstModule* modp, AstVar* hookPathp, int idx,
-                       std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                       std::map<string, AstVar*>& instPathVarps) {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         // Add filter logic providing path information to the modules/instances.
         // Ensure the shared signed-int dtype for the loop index exists
@@ -1274,7 +1286,7 @@ class HookPathRouter final {
         return "";
     }
     void addCaseItemToExisting(AstModule* modp, AstVar* hookPathp, int idx,
-                               std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                               std::map<string, AstVar*>& instPathVarps) {
         AstCase* const casep = m_caseCache[modp];
         AstVar* const loopVarp = m_loopVarCache[modp];
         if (!casep || !loopVarp) return;
@@ -1282,10 +1294,10 @@ class HookPathRouter final {
         insertCaseItems(modp, casep, hookPathp, loopVarRefp, idx, instPathVarps);
     }
     void addSelPin(AstCell* cellp, int idx, const std::vector<AstVar*>& dpihookPathps,
-                   const std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                   const std::map<string, AstVar*>& instPathVarps) {
         int pinNum = 0;
         for (AstNode* cellPinp = cellp->pinsp(); cellPinp; cellPinp = cellPinp->nextp()) pinNum++;
-        const auto it = instPathVarps.find(cellp);
+        const auto it = instPathVarps.find(cellFlatName(cellp));
         if (it != instPathVarps.end()) {
             AstVar* const instPathVarp = it->second;
             AstVarRef* const instPathVerRefp
@@ -1308,17 +1320,18 @@ class HookPathRouter final {
         });
         return found;
     }
-    void addIfaceCtrlAssign(AstModule* parentp, AstCell* cellp, AstVar* ifaceVarp, AstVar* srcp) {
-        if (!ifaceVarp || !srcp || hasIfaceCtrlAssign(parentp, ifaceVarp, cellp->name())) return;
+    void addIfaceCtrlAssign(AstModule* parentp, AstCell* cellp, const string& instName,
+                            AstVar* ifaceVarp, AstVar* srcp) {
+        if (!ifaceVarp || !srcp || hasIfaceCtrlAssign(parentp, ifaceVarp, instName)) return;
         FileLine* const fl = cellp->fileline();
-        AstVarXRef* const lhsp = new AstVarXRef{fl, ifaceVarp, cellp->name(), VAccess::WRITE};
+        AstVarXRef* const lhsp = new AstVarXRef{fl, ifaceVarp, instName, VAccess::WRITE};
         AstVarRef* const rhsp = new AstVarRef{fl, srcp, VAccess::READ};
         AstAssignW* const assignp = new AstAssignW{fl, lhsp, rhsp};
         parentp->addStmtsp(new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignp});
     }
     void insCtrlLogic2IfaceCellp(AstCell* cellp, int idx,
                                  const std::vector<AstVar*>& dpihookCaseIdps,
-                                 const std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                                 const std::map<string, AstVar*>& instPathVarps) {
         AstModule* parentp = nullptr;
         for (AstModule* modp : m_insTarget.modps) {
             for (AstNode* np = modp->op2p(); np; np = np->nextp())
@@ -1327,15 +1340,19 @@ class HookPathRouter final {
         }
         if (!parentp) return;
         AstIface* const ifacep = VN_AS(cellp->modp(), Iface);
-        addIfaceCtrlAssign(parentp, cellp, findExistingInputVar(ifacep, "DPIHOOK_CASE_ID"),
-                           dpihookCaseIdps[idx]);
-        const auto pathIt = instPathVarps.find(cellp);
-        addIfaceCtrlAssign(parentp, cellp, findExistingInputVar(ifacep, "DPIHOOK_PATH"),
-                           pathIt == instPathVarps.end() ? nullptr : pathIt->second);
+        for (const string& instName : cellInstFlatNames(cellp)) {
+            addIfaceCtrlAssign(parentp, cellp, instName,
+                               findExistingInputVar(ifacep, "DPIHOOK_CASE_ID"),
+                               dpihookCaseIdps[idx]);
+            const auto pathIt = instPathVarps.find(instName);
+            addIfaceCtrlAssign(parentp, cellp, instName,
+                               findExistingInputVar(ifacep, "DPIHOOK_PATH"),
+                               pathIt == instPathVarps.end() ? nullptr : pathIt->second);
+        }
     }
     void insCtrlLogic2Cellp(const std::vector<AstVar*>& dpihookCaseIdps,
                             const std::vector<AstVar*>& dpihookPathps,
-                            const std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                            const std::map<string, AstVar*>& instPathVarps) {
         AstCell* prevCellp = nullptr;
         int idx = 0;
         for (AstCell* cellp : m_insTarget.cellps) {
@@ -1353,7 +1370,7 @@ class HookPathRouter final {
     }
     void insCtrlLogic2Modp(std::vector<AstVar*>& dpihookCaseIdps,
                            std::vector<AstVar*>& dpihookPathps,
-                           std::unordered_map<AstCell*, AstVar*>& instPathVarps) {
+                           std::map<string, AstVar*>& instPathVarps) {
         AstNodeModule* const origModp = m_insTarget.hookLogicContainerp();
         size_t idx = 0;
         for (AstModule* modp : m_insTarget.modps) {
@@ -1420,7 +1437,7 @@ public:
     void insert() {
         std::vector<AstVar*> dpihookCaseIdps;
         std::vector<AstVar*> dpihookPathps;
-        std::unordered_map<AstCell*, AstVar*> instPathVarps;
+        std::map<string, AstVar*> instPathVarps;
 
         insCtrlLogic2Modp(dpihookCaseIdps, dpihookPathps, instPathVarps);
         insCtrlLogic2Cellp(dpihookCaseIdps, dpihookPathps, instPathVarps);

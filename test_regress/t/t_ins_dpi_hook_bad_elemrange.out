@@ -1,9 +1,9 @@
-%Error: t/t_ins_dpi_hook_bad_array.v:32:15: Element index 9 is out of range for target variable 'mem' in 'top_module.s' (4 elements)
-   32 |   logic [7:0] mem [4];
+%Error: t/t_ins_dpi_hook_bad_array.v:31:15: Element index 9 is out of range for target variable 'mem' in 'top_module.s' (4 elements)
+   31 |   logic [7:0] mem [4];
       |               ^~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: t/t_ins_dpi_hook_bad_array.v:28:8: DPI-hook insertion of target 'top_module.s' could not find 'var' in '__.instance.var'
-   28 | module sub (
+%Error: t/t_ins_dpi_hook_bad_array.v:27:8: DPI-hook insertion of target 'top_module.s' could not find 'var' in '__.instance.var'
+   27 | module sub (
       |        ^~~
 %Error: Incomplete hook-insertion configuration for target 'top_module.s.mem'; see the error above
 %Error: Exiting due to

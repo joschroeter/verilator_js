@@ -1,9 +1,9 @@
-%Error: t/t_ins_dpi_hook_bad_path.v:13:11: DPI-hook insertion of target 'top_module.bi.p': a member path into an interface signal is not supported (target the whole signal, optionally with -bit-pos or -bit-range)
-   13 | interface simple_if;
+%Error: t/t_ins_dpi_hook_bad_path.v:12:11: DPI-hook insertion of target 'top_module.bi.p': a member path into an interface signal is not supported (target the whole signal, optionally with -bit-pos or -bit-range)
+   12 | interface simple_if;
       |           ^~~~~~~~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: t/t_ins_dpi_hook_bad_path.v:33:8: DPI-hook insertion of target 'top_module.u[0]': arrayed module instances are not supported
-   33 |   leaf u[2](.i(iv), .o(ov));
+%Error: t/t_ins_dpi_hook_bad_path.v:32:8: DPI-hook insertion of target 'top_module.u[0]': arrayed module instances are not supported
+   32 |   leaf u[2](.i(iv), .o(ov));
       |        ^
 %Error: Incomplete hook-insertion configuration for target 'top_module.bi.p'; see the error above
 %Error: Exiting due to

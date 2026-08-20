@@ -1,5 +1,5 @@
-%Error: t/t_ins_dpi_hook_bad_array.v:33:15: Target variable 'bigmem' in 'top_module.s' flattens to 512 leaves, too large to hook as a whole (limit 256); target individual elements instead
-   33 |   logic [7:0] bigmem [512];   
+%Error: t/t_ins_dpi_hook_bad_array.v:32:15: Target variable 'bigmem' in 'top_module.s' flattens to 512 leaves, too large to hook as a whole (limit 256); target individual elements instead
+   32 |   logic [7:0] bigmem [512];   
       |               ^~~~~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
 %Error: Incomplete hook-insertion configuration for target 'top_module.s.bigmem'; see the error above

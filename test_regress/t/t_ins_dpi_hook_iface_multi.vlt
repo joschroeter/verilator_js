@@ -7,4 +7,5 @@
 
 `verilator_config
 
-insert_dpihook -callback "cb_iface" -var "top_module.b.data"
+insert_dpihook -callback "cb_iface_multi" -var "top_module.s1.data"
+insert_dpihook -callback "cb_iface_multi" -var "top_module.arr[0].data"

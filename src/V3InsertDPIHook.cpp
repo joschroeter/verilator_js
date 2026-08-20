@@ -941,6 +941,13 @@ class HookInsTargetFndr final {
                                                            << "' must be a supported type");
             return;
         }
+        if (basicp->isDouble()) {
+            nodep->fileline()->v3error("Target variable '"
+                                       << nodep->name() << "' in '" << m_currHier
+                                       << "' is a floating-point type, which has no"
+                                          " gate-level representation and cannot be hooked");
+            return;
+        }
         if (ClockUseVisitor{m_netlistp, nodep}.isClock()) {
             nodep->fileline()->v3error(
                 "Target variable '"

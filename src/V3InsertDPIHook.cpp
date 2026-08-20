@@ -545,6 +545,16 @@ class HookInsTargetFndr final {
                 m_currHier += "." + targetParts[i];
                 continue;
             }
+            if (partIdx) {
+                AstCell* const arrayCellp = scopeChildCell(currScopep, partName);
+                if (arrayCellp && arrayCellp->rangep()) {
+                    arrayCellp->fileline()->v3error(
+                        "DPI-hook insertion of target '"
+                        << prefix << "': arrayed module instances are not supported");
+                    m_error = true;
+                    return;
+                }
+            }
             // Neither a cell nor a var -> missing instance
             if (i == 1) {
                 currModp->fileline()->v3error("DPI-hook insertion of target '"
@@ -588,10 +598,18 @@ class HookInsTargetFndr final {
                            size_t boundaryIdx) {
         AstModule* const origModp = VN_CAST(modp, Module);
         if (!origModp) {
-            modp->fileline()->v3error("DPI-hook insertion of target '"
-                                      << m_target
-                                      << "' resolves to a non-module container, which is not"
-                                         " supported");
+            if (VN_IS(modp, Iface)) {
+                modp->fileline()->v3error(
+                    "DPI-hook insertion of target '"
+                    << m_target
+                    << "': a member path into an interface signal is not supported (target the"
+                       " whole signal, optionally with -bit-pos or -bit-range)");
+            } else {
+                modp->fileline()->v3error("DPI-hook insertion of target '"
+                                          << m_target
+                                          << "' resolves to a non-module container, which is not"
+                                             " supported");
+            }
             m_error = true;
             return;
         }

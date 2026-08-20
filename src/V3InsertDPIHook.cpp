@@ -110,6 +110,7 @@ struct HookInsertEntry final {
     std::vector<AstNodeAssign*> assignps;  // Assign nodes which should be edited later on
     std::vector<AstNodeVarRef*> varRefps;  // Read refs to redirect (VarRef or cross-ref VarXRef)
     std::vector<AstNodeVarRef*> wrRefps;  // Driver refs of an interface signal
+    std::vector<AstVarXRef*> xmrRefps;  // Cross-module read refs from an enclosing module
     bool found = false;  // Whether the target variable was found during data finder pass
     bool done = false;  // Whether the hook insertion has been completed for a signal
     bool isAggregateMirror = false;
@@ -743,6 +744,22 @@ class HookInsTargetFndr final {
                     setVarRefs(vrp, m_target, entry.varTarget);
             }
         });
+        const auto cfgIt = m_insCfg.find(m_target);
+        if (cfgIt != m_insCfg.end()) {
+            for (AstNodeModule* modp = m_netlistp->modulesp(); modp;
+                 modp = VN_AS(modp->nextp(), NodeModule)) {
+                if (modp == origModp) continue;
+                modp->foreach([&](AstNode* np) {
+                    AstVarXRef* const xrp = VN_CAST(np, VarXRef);
+                    if (!xrp || xrp->access() != VAccess::READ) return;
+                    for (auto& entry : cfgIt->second.entries) {
+                        if (entry.isAggregateMirror || entry.hasMemberStep()) continue;
+                        if (entry.origVarp && xrp->varp() == entry.origVarp)
+                            entry.xmrRefps.push_back(xrp);
+                    }
+                });
+            }
+        }
         if (!m_foundVarp)
             origModp->fileline()->v3error("DPI-hook insertion of target '"
                                           << m_target
@@ -1784,6 +1801,10 @@ class DPIOverrideBuilder final {
             return;
         }
         for (AstNodeVarRef* const refp : m_targetEntry.varRefps) redirectReadRef(refp, m_selResp);
+        for (AstVarXRef* const xrp : m_targetEntry.xmrRefps) {
+            xrp->varp(m_selResp);
+            xrp->name(m_selResp->name());
+        }
     }
     bool routePartialDrivers(AstVar* targetVarp) {
         if (!targetVarp->isOutputish()) return false;

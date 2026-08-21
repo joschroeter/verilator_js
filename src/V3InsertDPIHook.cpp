@@ -285,6 +285,18 @@ static string cellFlatName(const AstCell* cellp) {
     }
     return name;
 }
+static AstGenBlock* cellGenBlockp(const AstCell* cellp) {
+    for (AstNode* parentp = getParentp(cellp); parentp; parentp = getParentp(parentp)) {
+        if (VN_IS(parentp, NodeModule)) break;
+        if (AstGenBlock* const genp = VN_CAST(parentp, GenBlock))
+            if (!genp->implied()) return genp;
+    }
+    return nullptr;
+}
+static string flatNameTail(const string& flatName) {
+    const size_t pos = flatName.rfind("__DOT__");
+    return pos == string::npos ? flatName : flatName.substr(pos + 7);
+}
 static std::vector<string> cellInstFlatNames(const AstCell* cellp) {
     const string flatName = cellFlatName(cellp);
     const AstRange* const rangep = cellp->rangep();
@@ -351,12 +363,12 @@ class HookInsTargetFndr final {
     void collectAssignp(AstNodeAssign* assignp, const AstVar* targetVarp, const string& varName,
                         bool isOutput) {
         AstNodeExpr* const exprp = isOutput ? assignp->lhsp() : assignp->rhsp();
-        if (AstVarRef* const varrefp = VN_CAST(exprp, VarRef)) {
+        if (AstNodeVarRef* const varrefp = VN_CAST(exprp, NodeVarRef)) {
             if (varrefp->varp() == targetVarp && !varrefp->varp()->isFuncLocal())
                 setAssigns(assignp, m_target, varName);
         } else {
-            for (AstVarRef* varrefp = VN_CAST(exprp->op1p(), VarRef); varrefp;
-                 varrefp = VN_CAST(varrefp->nextp(), VarRef))
+            for (AstNodeVarRef* varrefp = VN_CAST(exprp->op1p(), NodeVarRef); varrefp;
+                 varrefp = VN_CAST(varrefp->nextp(), NodeVarRef))
                 if (varrefp->varp() == targetVarp && !varrefp->varp()->isFuncLocal())
                     setAssigns(assignp, m_target, varName);
         }
@@ -1345,9 +1357,9 @@ class HookPathRouter final {
         }
     }
     // Whether the parent already drives `ifaceVarp` through this instance
-    bool hasIfaceCtrlAssign(AstModule* parentp, const AstVar* ifaceVarp, const string& cellName) {
+    bool hasIfaceCtrlAssign(AstNode* scopep, const AstVar* ifaceVarp, const string& cellName) {
         bool found = false;
-        parentp->foreach([&](AstNode* np) {
+        scopep->foreach([&](AstNode* np) {
             const AstVarXRef* const xrefp = VN_CAST(np, VarXRef);
             if (xrefp && xrefp->varp() == ifaceVarp && xrefp->dotted() == cellName
                 && xrefp->access().isWriteOrRW())
@@ -1357,22 +1369,26 @@ class HookPathRouter final {
     }
     void addIfaceCtrlAssign(AstModule* parentp, AstCell* cellp, const string& instName,
                             AstVar* ifaceVarp, AstVar* srcp) {
-        if (!ifaceVarp || !srcp || hasIfaceCtrlAssign(parentp, ifaceVarp, instName)) return;
+        if (!ifaceVarp || !srcp) return;
+        AstGenBlock* const genp = cellGenBlockp(cellp);
+        const string dotted = genp ? flatNameTail(instName) : instName;
+        AstNode* const scopep = genp ? static_cast<AstNode*>(genp) : parentp;
+        if (hasIfaceCtrlAssign(scopep, ifaceVarp, dotted)) return;
         FileLine* const fl = cellp->fileline();
-        AstVarXRef* const lhsp = new AstVarXRef{fl, ifaceVarp, instName, VAccess::WRITE};
+        AstVarXRef* const lhsp = new AstVarXRef{fl, ifaceVarp, dotted, VAccess::WRITE};
         AstVarRef* const rhsp = new AstVarRef{fl, srcp, VAccess::READ};
         AstAssignW* const assignp = new AstAssignW{fl, lhsp, rhsp};
-        parentp->addStmtsp(new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignp});
+        AstAlways* const alwaysp = new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignp};
+        if (genp) {
+            genp->addItemsp(alwaysp);
+        } else {
+            parentp->addStmtsp(alwaysp);
+        }
     }
     void insCtrlLogic2IfaceCellp(AstCell* cellp, int idx,
                                  const std::vector<AstVar*>& dpihookCaseIdps,
                                  const InstPathMap& instPathVarps) {
-        AstModule* parentp = nullptr;
-        for (AstModule* modp : m_insTarget.modps) {
-            for (AstNode* np = modp->op2p(); np; np = np->nextp())
-                if (VN_CAST(np, Cell) == cellp) parentp = modp;
-            if (parentp) break;
-        }
+        AstModule* const parentp = VN_CAST(cellOwnerModp(cellp), Module);
         if (!parentp) return;
         AstIface* const ifacep = VN_AS(cellp->modp(), Iface);
         for (const string& instName : cellInstFlatNames(cellp)) {

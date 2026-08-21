@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-extern "C" int cb_nest(int insID, svBit trigger, const svLogicVecVal* value) {
+extern "C" char cb_nest(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     (void)insID;
     const unsigned v = value[0].aval & 0xffU;

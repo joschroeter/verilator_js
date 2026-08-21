@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-extern "C" int cb_member(int insID, svBit trigger, const svLogicVecVal* value) {
+extern "C" char cb_member(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     const unsigned v = value[0].aval & 0xffU;
     if (insID == 1 && VL_TIME_Q() >= 20 && VL_TIME_Q() < 50) return 0xAA;

@@ -10,7 +10,7 @@
 
 #include <svdpi.h>
 
-extern "C" int cb_xmr(int insID, svBit trigger, const svLogicVecVal* value) {
+extern "C" char cb_xmr(int insID, svBit trigger, const svLogicVecVal* value) {
     if (VL_TIME_Q() >= 20) return 0xEE;
     return value->aval & 0xff;
 }

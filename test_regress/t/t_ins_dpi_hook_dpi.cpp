@@ -10,7 +10,7 @@
 
 #include <svdpi.h>
 
-extern "C" int instrument_var(int insID, svBit trigger, const svLogicVecVal* out) {
+extern "C" char instrument_var(int insID, svBit trigger, const svLogicVecVal* out) {
     const int x = out->aval & 0xff;
     switch (insID) {
     case 0:

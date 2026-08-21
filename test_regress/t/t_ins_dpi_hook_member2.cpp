@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-extern "C" int cb_a(int insID, svBit trigger, const svLogicVecVal* value) {
+extern "C" char cb_a(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     (void)insID;
     const unsigned v = value[0].aval & 0xffU;
@@ -21,7 +21,7 @@ extern "C" int cb_a(int insID, svBit trigger, const svLogicVecVal* value) {
     return static_cast<int>(v);
 }
 
-extern "C" int cb_b(int insID, svBit trigger, const svLogicVecVal* value) {
+extern "C" short cb_b(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     (void)insID;
     const unsigned v = value[0].aval & 0xffffU;

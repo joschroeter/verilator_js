@@ -269,6 +269,8 @@ static AstNode* getParentp(const AstNode* nodep) {
     }
     return nullptr;
 }
+using InstPathKey = std::pair<const AstNodeModule*, string>;
+using InstPathMap = std::map<InstPathKey, AstVar*>;
 static AstNodeModule* cellOwnerModp(const AstCell* cellp) {
     for (AstNode* parentp = getParentp(cellp); parentp; parentp = getParentp(parentp))
         if (AstNodeModule* const modp = VN_CAST(parentp, NodeModule)) return modp;
@@ -1191,8 +1193,7 @@ class HookPathRouter final {
         return false;
     }
     void insertCaseItems(AstModule* modp, AstCase* casep, AstVar* hookPathp,
-                         AstVarRef* loopVarRefp, int idx,
-                         std::map<string, AstVar*>& instPathVarps) {
+                         AstVarRef* loopVarRefp, int idx, InstPathMap& instPathVarps) {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         const int nextIdx = idx + 1;  // Increase index by one to account for this variable
                                       // referencing the next module/instance
@@ -1221,7 +1222,7 @@ class HookPathRouter final {
                 typeTablep->addTypesp(partsDTypep);
                 typeTablep->addTypesp(pathsDTypep);
                 modp->addStmtsp(instPathVarp);
-                instPathVarps[cellFlatNm] = instPathVarp;
+                instPathVarps[InstPathKey{modp, cellFlatNm}] = instPathVarp;
                 // Add Case Item
                 AstConst* const constPackStringp
                     = new AstConst{modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
@@ -1285,8 +1286,7 @@ class HookPathRouter final {
         pinp->svDotName(true);
         cellp->addPinsp(pinp);
     }
-    void addPathFilter(AstModule* modp, AstVar* hookPathp, int idx,
-                       std::map<string, AstVar*>& instPathVarps) {
+    void addPathFilter(AstModule* modp, AstVar* hookPathp, int idx, InstPathMap& instPathVarps) {
         AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         // Add filter logic providing path information to the modules/instances.
         // Ensure the shared signed-int dtype for the loop index exists
@@ -1321,7 +1321,7 @@ class HookPathRouter final {
         return "";
     }
     void addCaseItemToExisting(AstModule* modp, AstVar* hookPathp, int idx,
-                               std::map<string, AstVar*>& instPathVarps) {
+                               InstPathMap& instPathVarps) {
         AstCase* const casep = m_caseCache[modp];
         AstVar* const loopVarp = m_loopVarCache[modp];
         if (!casep || !loopVarp) return;
@@ -1329,10 +1329,10 @@ class HookPathRouter final {
         insertCaseItems(modp, casep, hookPathp, loopVarRefp, idx, instPathVarps);
     }
     void addSelPin(AstCell* cellp, int idx, const std::vector<AstVar*>& dpihookPathps,
-                   const std::map<string, AstVar*>& instPathVarps) {
+                   const InstPathMap& instPathVarps) {
         int pinNum = 0;
         for (AstNode* cellPinp = cellp->pinsp(); cellPinp; cellPinp = cellPinp->nextp()) pinNum++;
-        const auto it = instPathVarps.find(cellFlatName(cellp));
+        const auto it = instPathVarps.find(InstPathKey{cellOwnerModp(cellp), cellFlatName(cellp)});
         if (it != instPathVarps.end()) {
             AstVar* const instPathVarp = it->second;
             AstVarRef* const instPathVerRefp
@@ -1366,7 +1366,7 @@ class HookPathRouter final {
     }
     void insCtrlLogic2IfaceCellp(AstCell* cellp, int idx,
                                  const std::vector<AstVar*>& dpihookCaseIdps,
-                                 const std::map<string, AstVar*>& instPathVarps) {
+                                 const InstPathMap& instPathVarps) {
         AstModule* parentp = nullptr;
         for (AstModule* modp : m_insTarget.modps) {
             for (AstNode* np = modp->op2p(); np; np = np->nextp())
@@ -1379,7 +1379,7 @@ class HookPathRouter final {
             addIfaceCtrlAssign(parentp, cellp, instName,
                                findExistingInputVar(ifacep, "DPIHOOK_CASE_ID"),
                                dpihookCaseIdps[idx]);
-            const auto pathIt = instPathVarps.find(instName);
+            const auto pathIt = instPathVarps.find(InstPathKey{parentp, instName});
             addIfaceCtrlAssign(parentp, cellp, instName,
                                findExistingInputVar(ifacep, "DPIHOOK_PATH"),
                                pathIt == instPathVarps.end() ? nullptr : pathIt->second);
@@ -1387,7 +1387,7 @@ class HookPathRouter final {
     }
     void insCtrlLogic2Cellp(const std::vector<AstVar*>& dpihookCaseIdps,
                             const std::vector<AstVar*>& dpihookPathps,
-                            const std::map<string, AstVar*>& instPathVarps) {
+                            const InstPathMap& instPathVarps) {
         AstCell* prevCellp = nullptr;
         int idx = 0;
         for (AstCell* cellp : m_insTarget.cellps) {
@@ -1404,8 +1404,7 @@ class HookPathRouter final {
         }
     }
     void insCtrlLogic2Modp(std::vector<AstVar*>& dpihookCaseIdps,
-                           std::vector<AstVar*>& dpihookPathps,
-                           std::map<string, AstVar*>& instPathVarps) {
+                           std::vector<AstVar*>& dpihookPathps, InstPathMap& instPathVarps) {
         AstNodeModule* const origModp = m_insTarget.hookLogicContainerp();
         size_t idx = 0;
         for (AstModule* modp : m_insTarget.modps) {
@@ -1472,7 +1471,7 @@ public:
     void insert() {
         std::vector<AstVar*> dpihookCaseIdps;
         std::vector<AstVar*> dpihookPathps;
-        std::map<string, AstVar*> instPathVarps;
+        InstPathMap instPathVarps;
 
         insCtrlLogic2Modp(dpihookCaseIdps, dpihookPathps, instPathVarps);
         insCtrlLogic2Cellp(dpihookCaseIdps, dpihookPathps, instPathVarps);

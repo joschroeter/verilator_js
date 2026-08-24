@@ -116,6 +116,7 @@ struct HookInsertEntry final {
     bool isAggregateMirror = false;
     AstVar* aggregateVarp = nullptr;  // The original unpacked aggregate var
     std::string genScope;  // Generate-block prefix in source notation ("lane[0]")
+    std::string origTarget;  // Target as the user specified
     // Which bit selection the target carries, decoded once here because the
     // callback's port list and its call arguments must agree: -bit-pos sets only
     // the right position, -bit-range sets both, and neither means whole-signal
@@ -199,7 +200,7 @@ static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
     AstNodeModule* const modp = cfg.modp;
     FileLine* const fl = modp->fileline();
     // Create the loop variable index
-    AstVar* const loopVarp = new AstVar{fl, VVarType::VAR, "i", cfg.intDTypep};
+    AstVar* const loopVarp = new AstVar{fl, VVarType::VAR, "__Vdpihook_i", cfg.intDTypep};
     loopVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
     loopVarp->usedLoopIdx(true);
     if (cfg.loopVarCachep) (*cfg.loopVarCachep)[modp] = loopVarp;
@@ -904,10 +905,11 @@ class HookInsTargetFndr final {
             if (step.isIndex) {
                 AstUnpackArrayDType* const arrp = VN_CAST(dtp, UnpackArrayDType);
                 if (!arrp) {
-                    nodep->fileline()->v3error("DPI-hook target '"
-                                               << nodep->name() << "' in '" << m_currHier
-                                               << "': index [" << step.index
-                                               << "] applied to a non-array element");
+                    nodep->fileline()->v3error(
+                        "DPI-hook target '"
+                        << nodep->name() << "' in '" << m_currHier << "': index [" << step.index
+                        << "] applied to " << dtp->prettyDTypeNameQ()
+                        << "; element access is supported on unpacked arrays only");
                     return nullptr;
                 }
                 if (step.index >= static_cast<uint32_t>(arrp->elementsConst())) {
@@ -922,10 +924,11 @@ class HookInsTargetFndr final {
             } else {
                 AstStructDType* const sdt = VN_CAST(dtp, StructDType);
                 if (!sdt) {
-                    nodep->fileline()->v3error("DPI-hook target '"
-                                               << nodep->name() << "' in '" << m_currHier
-                                               << "': member '." << step.member
-                                               << "' of a non-struct/union type");
+                    nodep->fileline()->v3error(
+                        "DPI-hook target '"
+                        << nodep->name() << "' in '" << m_currHier << "': member '." << step.member
+                        << "' of " << dtp->prettyDTypeNameQ()
+                        << "; member access is supported on packed structs only");
                     return nullptr;
                 }
                 AstNodeDType* memberDtp = nullptr;
@@ -1235,6 +1238,25 @@ class HookPathRouter final {
                 typeTablep->addTypesp(pathsDTypep);
                 modp->addStmtsp(instPathVarp);
                 instPathVarps[InstPathKey{modp, cellFlatNm}] = instPathVarp;
+                for (uint32_t part = 0; part <= static_cast<uint32_t>(targetParts - nextIdx);
+                     ++part) {
+                    AstSel* const slotSelp
+                        = new AstSel{modp->fileline(), loopVarRefp->cloneTree(false),
+                                     new AstConst{modp->fileline(), 0}, DPIHOOK_MAX_TARGETS_BITS};
+                    AstArraySel* const slotp = new AstArraySel{
+                        modp->fileline(),
+                        new AstVarRef{modp->fileline(), instPathVarp, VAccess::WRITE}, slotSelp};
+                    slotp->dtypep(partsDTypep);
+                    AstArraySel* const partp = new AstArraySel{
+                        modp->fileline(), slotp, new AstConst{modp->fileline(), part}};
+                    partp->dtypep(m_dtypeCache.stringDTypep);
+                    AstConst* const emptyp
+                        = new AstConst{modp->fileline(), AstConst::VerilogStringLiteral{}, ""};
+                    AstCvtPackString* const emptyStrp
+                        = new AstCvtPackString{modp->fileline(), emptyp};
+                    emptyStrp->dtypep(m_dtypeCache.stringDTypep);
+                    casep->addHereThisAsNext(new AstAssign{modp->fileline(), partp, emptyStrp});
+                }
                 // Add Case Item
                 AstConst* const constPackStringp
                     = new AstConst{modp->fileline(), AstConst::VerilogStringLiteral{}, cellPath};
@@ -1477,9 +1499,9 @@ public:
                    std::unordered_map<AstNodeModule*, AstVar*>& loopVarCache,
                    std::unordered_map<AstNodeModule*, std::set<std::string>>& caseChildCells)
         : m_netlistp{nodep}
-        , m_insTarget{insTarget}
         , m_cfgKey{cfgKey}
         , m_dtypeCache{dtypeCache}
+        , m_insTarget{insTarget}
         , m_caseCache{caseCache}
         , m_loopVarCache{loopVarCache}
         , m_caseChildCells{caseChildCells} {}
@@ -2068,6 +2090,19 @@ class DPIOverrideBuilder final {
         AstCaseItem* const caseItemp
             = new AstCaseItem{m_targetModp->fileline(), cvtPackStringp, caseBodyp};
         casep->addItemsp(caseItemp);
+        clearBindFlagBeforeLoop(casep);
+    }
+    void clearBindFlagBeforeLoop(AstCase* casep) {
+        AstBegin* outerp = nullptr;
+        for (AstNode* nodep = getParentp(casep); nodep; nodep = getParentp(nodep)) {
+            if (VN_IS(nodep, Always)) break;
+            if (AstBegin* const beginp = VN_CAST(nodep, Begin)) outerp = beginp;
+        }
+        if (!outerp || !outerp->stmtsp()) return;
+        AstVarRef* const condRefp
+            = new AstVarRef{m_targetModp->fileline(), m_condVarp, VAccess::WRITE};
+        outerp->stmtsp()->addHereThisAsNext(new AstAssign{
+            m_targetModp->fileline(), condRefp, new AstConst{m_targetModp->fileline(), 0}});
     }
     static AstNodeExpr* aggSelFromp(AstNode* nodep) {
         if (AstStructSel* const sp = VN_CAST(nodep, StructSel)) return sp->fromp();
@@ -2350,8 +2385,8 @@ public:
         , m_typeTablep{typeTablep}
         , m_dpiTriggerp{dpiTriggerp}
         , m_targetEntry{targetEntry}
-        , m_caseCache{caseCache}
         , m_selResMap{selResMap}
+        , m_caseCache{caseCache}
         , m_targetLoopVarCache{targetLoopVarCache} {}
     void insert() {
         VL_RESTORER(m_selResp);
@@ -2440,7 +2475,7 @@ public:
                 if (!entry.found) {
                     m_netlistp->fileline()->v3error(
                         "Incomplete hook-insertion configuration for target '"
-                        << key << "." << entry.varTarget << "'; see the error above");
+                        << entry.origTarget << "'; see the error above");
                     return;
                 }
             }
@@ -2474,7 +2509,7 @@ public:
                 if (isArrayDType || readViaArraySel) {
                     ov->v3warn(E_UNSUPPORTED,
                                "DPI-hook target '"
-                                   << key << "." << entry.varTarget
+                                   << entry.origTarget
                                    << "' is an unpacked array or is accessed element-wise;"
                                       " hooking array-shaped targets is not supported.");
                     continue;
@@ -2495,8 +2530,8 @@ public:
                            || priorp->bitRangeRight != entry.bitRangeRight) {
                     // A signal carries at most one hook
                     ov->v3error("DPI-hook target '"
-                                << key << "." << entry.varTarget
-                                << "' is already hooked with callback '" << priorp->callback
+                                << entry.origTarget << "' is already hooked with callback '"
+                                << priorp->callback
                                 << "'; a signal can carry only one hook - select the fault"
                                    " (bit position, behavior) via case ids in that callback");
                 }
@@ -2517,6 +2552,11 @@ static std::map<std::string, HookInsertTarget> buildWorkingCfg() {
             entry.callback = cfgEntry.callback;
             entry.varTarget = cfgEntry.varTarget;
             entry.accessPath = cfgEntry.accessPath;
+            entry.origTarget = target + "." + cfgEntry.varTarget;
+            for (const AccessStep& step : cfgEntry.accessPath) {
+                entry.origTarget
+                    += step.isIndex ? "[" + std::to_string(step.index) + "]" : "." + step.member;
+            }
             targetp.entries.push_back(std::move(entry));
         }
     }

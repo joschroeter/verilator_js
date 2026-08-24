@@ -5,5 +5,5 @@
 %Error: t/t_ins_dpi_hook_bad_array.v:27:8: DPI-hook insertion of target 'top_module.s' could not find 'var' in '__.instance.var'
    27 | module sub (
       |        ^~~
-%Error: Incomplete hook-insertion configuration for target 'top_module.s.mem'; see the error above
+%Error: Incomplete hook-insertion configuration for target 'top_module.s.mem[9]'; see the error above
 %Error: Exiting due to

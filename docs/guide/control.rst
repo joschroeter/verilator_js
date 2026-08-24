@@ -210,9 +210,10 @@ The grammar of control commands is as follows:
    If this can not be guaranteed, the signal must use another callback function.
    Additionally a signal can only be hooked once.
 
-   The feature also provides optional configurations like ``-bit-pos``, which restricts the hook to a single bit, or ``-bit-range``, which restricts
-   the hook to an inclusive ``<msb>:<lsb>`` range of bits.
+   The feature also provides optional configurations like ``-bit-pos``, which aims the hook at a single bit, or ``-bit-range``, which aims it at an
+   inclusive ``<msb>:<lsb>`` range of bits.
    Both options are mutually exclusive, and each passes its positions to the callback as ``input int`` arguments ahead of the value.
+   The callback still receives and returns the whole signal, so it is the callback that applies the change to those bits.
    If neither option is used, the whole signal is hooked.
 
    The supported signal types are:

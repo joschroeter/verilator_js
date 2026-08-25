@@ -1929,70 +1929,140 @@ class DPIOverrideBuilder final {
                           new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, selp}});
         return true;
     }
+    // Walk every module, so a read that reaches the target through a cross-module reference is seen
+    template <typename Func>
+    static void foreachModule(Func&& f) {
+        for (AstNodeModule* modp = v3Global.rootp()->modulesp(); modp;
+             modp = VN_AS(modp->nextp(), NodeModule)) {
+            modp->foreach(f);
+        }
+    }
+    static AstNodeVarRef* readRootRefp(AstNode* nodep) {
+        while (nodep) {
+            if (AstNodeVarRef* const vrp = VN_CAST(nodep, NodeVarRef)) return vrp;
+            nodep = aggSelFromp(nodep);
+        }
+        return nullptr;
+    }
+    static void replaceReadWithSelp(AstNodeExpr* readp, const AstNodeVarRef* rootp, AstVar* selp) {
+        FileLine* const fl = readp->fileline();
+        const AstVarXRef* const xrp = VN_CAST(rootp, VarXRef);
+        AstNodeExpr* const newp
+            = xrp ? static_cast<AstNodeExpr*>(
+                        new AstVarXRef{fl, selp, xrp->dotted(), VAccess::READ})
+                  : static_cast<AstNodeExpr*>(new AstVarRef{fl, selp, VAccess::READ});
+        readp->replaceWith(newp);
+        VL_DO_DANGLING(readp->deleteTree(), readp);
+    }
     void redirectElementReads(AstVar* targetVarp) {
         const uint32_t idx = m_targetEntry.elemIndex().value();
-        std::vector<AstArraySel*> reads;
-        m_targetModp->foreach([&](AstNode* nodep) {
+        std::vector<std::pair<AstArraySel*, AstNodeVarRef*>> reads;
+        foreachModule([&](AstNode* nodep) {
             AstArraySel* const aselp = VN_CAST(nodep, ArraySel);
             if (!aselp || aselp == m_viewSelp) return;  // keep the view's own read
-            const AstVarRef* const vrp = VN_CAST(aselp->fromp(), VarRef);
+            AstNodeVarRef* const vrp = VN_CAST(aselp->fromp(), NodeVarRef);
             if (!vrp || vrp->varp() != targetVarp || !vrp->access().isReadOnly()) return;
             const AstConst* const idxp = VN_CAST(aselp->bitp(), Const);
             if (!idxp || idxp->toUInt() != idx) return;
-            reads.push_back(aselp);
+            reads.emplace_back(aselp, vrp);
         });
-        for (AstArraySel* const aselp : reads) {
-            aselp->replaceWith(new AstVarRef{m_targetModp->fileline(), m_selResp, VAccess::READ});
-            VL_DO_DANGLING(aselp->deleteTree(), aselp);
+        for (const auto& [aselp, rootp] : reads) replaceReadWithSelp(aselp, rootp, m_selResp);
+    }
+    struct ChainStep final {
+        enum Kind : uint8_t { ARRAYSEL, STRUCTSEL, BITSEL } kind = ARRAYSEL;
+        uint32_t index = 0;  // ARRAYSEL
+        std::string member;  // STRUCTSEL
+        int lsb = 0;  // BITSEL
+        int width = 0;  // BITSEL
+        AstNodeDType* dtypep = nullptr;  // type this step yields
+    };
+    std::vector<ChainStep> accessChainSteps(const AstVar* rootVarp) const {
+        std::vector<ChainStep> steps;
+        AstNodeDType* dtp = rootVarp->dtypep()->skipRefp();
+        for (const AccessStep& step : m_targetEntry.accessPath) {
+            ChainStep out;
+            if (step.isIndex) {
+                AstUnpackArrayDType* const arrp = VN_AS(dtp, UnpackArrayDType);
+                out.kind = ChainStep::ARRAYSEL;
+                out.index = step.index;
+                out.dtypep = arrp->subDTypep();
+            } else {
+                AstStructDType* const sdt = VN_AS(dtp, StructDType);
+                AstNodeDType* memberDtp = nullptr;
+                int msbOff = 0;
+                for (AstMemberDType* m = sdt->membersp(); m;
+                     m = VN_CAST(m->nextp(), MemberDType)) {
+                    if (m->name() == step.member) {
+                        memberDtp = m->subDTypep();
+                        break;
+                    }
+                    msbOff += aggBitWidth(m->subDTypep());
+                }
+                out.dtypep = memberDtp;
+                if (sdt->packed()) {
+                    out.kind = ChainStep::BITSEL;
+                    out.width = memberDtp->width();
+                    out.lsb = sdt->width() - msbOff - out.width;
+                } else {
+                    out.kind = ChainStep::STRUCTSEL;
+                    out.member = step.member;
+                }
+            }
+            dtp = out.dtypep->skipRefp();
+            steps.push_back(out);
         }
+        return steps;
     }
     // Build the READ select chain rootVarp<accessPath> (e.g. u.arr[2].x) with dtypes
     // set, returning the outermost (leaf) expression
     AstNodeExpr* buildAccessChain(AstVar* rootVarp, FileLine* fl) {
         AstNodeExpr* curp = new AstVarRef{fl, rootVarp, VAccess::READ};
-        AstNodeDType* dtp = rootVarp->dtypep()->skipRefp();
-        for (const AccessStep& step : m_targetEntry.accessPath) {
-            if (step.isIndex) {
-                AstUnpackArrayDType* const arrp = VN_AS(dtp, UnpackArrayDType);
-                AstArraySel* const aselp = new AstArraySel{fl, curp, new AstConst{fl, step.index}};
-                aselp->dtypep(arrp->subDTypep());
-                dtp = arrp->subDTypep()->skipRefp();
-                curp = aselp;
-            } else {
-                AstStructDType* const sdt = VN_AS(dtp, StructDType);
-                AstNodeDType* memberDtp = nullptr;
-                for (AstMemberDType* m = sdt->membersp(); m; m = VN_CAST(m->nextp(), MemberDType))
-                    if (m->name() == step.member) {
-                        memberDtp = m->subDTypep();
-                        break;
-                    }
-                AstStructSel* const ssp = new AstStructSel{fl, curp, step.member};
-                ssp->dtypep(memberDtp);
-                dtp = memberDtp->skipRefp();
-                curp = ssp;
+        for (const ChainStep& step : accessChainSteps(rootVarp)) {
+            AstNodeExpr* nextp = nullptr;
+            switch (step.kind) {
+            case ChainStep::ARRAYSEL:
+                nextp = new AstArraySel{fl, curp, new AstConst{fl, step.index}};
+                break;
+            case ChainStep::STRUCTSEL: nextp = new AstStructSel{fl, curp, step.member}; break;
+            case ChainStep::BITSEL: nextp = new AstSel{fl, curp, step.lsb, step.width}; break;
             }
+            nextp->dtypep(step.dtypep);
+            curp = nextp;
         }
         return curp;
     }
     // Whether `exprp` is exactly the READ select chain rootVarp<accessPath>
-    static bool matchesAccessChain(const AstNode* exprp, const AstVar* rootVarp,
-                                   const AccessPath& path) {
+    bool matchesAccessChain(const AstNode* exprp, const AstVar* rootVarp) const {
+        const std::vector<ChainStep> steps = accessChainSteps(rootVarp);
         const AstNode* curp = exprp;
-        for (size_t n = path.size(); n-- > 0;) {  // outermost select first
-            const AccessStep& step = path[n];
-            if (step.isIndex) {
+        for (size_t n = steps.size(); n-- > 0;) {  // outermost select first
+            const ChainStep& step = steps[n];
+            switch (step.kind) {
+            case ChainStep::ARRAYSEL: {
                 const AstArraySel* const aselp = VN_CAST(curp, ArraySel);
                 if (!aselp) return false;
                 const AstConst* const c = VN_CAST(aselp->bitp(), Const);
                 if (!c || c->toUInt() != step.index) return false;
                 curp = aselp->fromp();
-            } else {
+                break;
+            }
+            case ChainStep::STRUCTSEL: {
                 const AstStructSel* const ssp = VN_CAST(curp, StructSel);
                 if (!ssp || ssp->name() != step.member) return false;
                 curp = ssp->fromp();
+                break;
+            }
+            case ChainStep::BITSEL: {
+                const AstSel* const selp = VN_CAST(curp, Sel);
+                if (!selp || selp->widthConst() != step.width) return false;
+                const AstConst* const lsbp = VN_CAST(selp->lsbp(), Const);
+                if (!lsbp || static_cast<int>(lsbp->toUInt()) != step.lsb) return false;
+                curp = selp->fromp();
+                break;
+            }
             }
         }
-        const AstVarRef* const vrp = VN_CAST(curp, VarRef);
+        const AstNodeVarRef* const vrp = VN_CAST(curp, NodeVarRef);
         return vrp && vrp->varp() == rootVarp && vrp->access().isReadOnly();
     }
     // Give a member/index-path target a scalar view of the addressed leaf, driven
@@ -2013,17 +2083,14 @@ class DPIOverrideBuilder final {
         return true;
     }
     void redirectMemberReads(AstVar* targetVarp) {
-        std::vector<AstNodeExpr*> reads;
-        m_targetModp->foreach([&](AstNode* nodep) {
+        std::vector<std::pair<AstNodeExpr*, AstNodeVarRef*>> reads;
+        foreachModule([&](AstNode* nodep) {
             AstNodeExpr* const exprp = VN_CAST(nodep, NodeExpr);
             if (!exprp || exprp == m_viewExprp) return;
-            if (matchesAccessChain(exprp, targetVarp, m_targetEntry.accessPath))
-                reads.push_back(exprp);
+            if (!matchesAccessChain(exprp, targetVarp)) return;
+            reads.emplace_back(exprp, readRootRefp(exprp));
         });
-        for (AstNodeExpr* const exprp : reads) {
-            exprp->replaceWith(new AstVarRef{m_targetModp->fileline(), m_selResp, VAccess::READ});
-            VL_DO_DANGLING(exprp->deleteTree(), exprp);
-        }
+        for (const auto& [exprp, rootp] : reads) replaceReadWithSelp(exprp, rootp, m_selResp);
     }
     void gatherOutputData(AstVar* targetVarp) {
         for (auto& assignp : m_targetEntry.assignps) {
@@ -2113,8 +2180,8 @@ class DPIOverrideBuilder final {
         AstVar* const mirrorp = m_targetEntry.origVarp;
         const int totalW = mirrorp->width();
         std::vector<AstNodeExpr*> targets;
-        m_targetModp->foreach([&](AstNode* nodep) {
-            AstVarRef* const vrp = VN_CAST(nodep, VarRef);
+        foreachModule([&](AstNode* nodep) {
+            AstNodeVarRef* const vrp = VN_CAST(nodep, NodeVarRef);
             if (!vrp || vrp->varp() != aggVarp || !vrp->access().isReadOnly()) return;
             AstNode* cur = vrp;
             while (AstNode* const p = cur->backp()) {

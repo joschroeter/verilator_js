@@ -347,6 +347,7 @@ class HookInsTargetFndr final {
     AstNode* m_targetScopep = nullptr;  // Innermost scope holding the target var
     bool m_error = false;
     bool m_foundVarp = false;
+    int m_errCountAtTarget = 0;
     string m_currHier;  // Instance path resolved so far
     string m_target;  // Current config key
 
@@ -775,7 +776,7 @@ class HookInsTargetFndr final {
                 });
             }
         }
-        if (!m_foundVarp)
+        if (!m_foundVarp && V3Error::errorCount() == m_errCountAtTarget)
             origModp->fileline()->v3error("DPI-hook insertion of target '"
                                           << m_target
                                           << "' could not find 'var' in '__.instance.var'");
@@ -1016,7 +1017,15 @@ class HookInsTargetFndr final {
             return;
         }
         AstUnpackArrayDType* const arrayp = VN_CAST(nodep->dtypep()->skipRefp(), UnpackArrayDType);
-        if (entry.elemIndex() && !arrayp && !hasArraySelUse(nodep)) return;
+        if (entry.elemIndex() && !arrayp && !hasArraySelUse(nodep)) {
+            nodep->fileline()->v3error("DPI-hook target '"
+                                       << nodep->name() << "' in '" << m_currHier << "': index ["
+                                       << entry.elemIndex().value() << "] applied to "
+                                       << nodep->dtypep()->skipRefp()->prettyDTypeNameQ()
+                                       << "; element access is supported on unpacked arrays"
+                                          " only. Hook the whole signal instead");
+            return;
+        }
         if (entry.elemIndex() && arrayp
             && entry.elemIndex().value() >= static_cast<uint32_t>(arrayp->elementsConst())) {
             nodep->fileline()->v3error("Element index " << entry.elemIndex().value()
@@ -1051,6 +1060,7 @@ public:
             m_targetModp = nullptr;
             m_foundVarp = false;
             m_error = false;
+            m_errCountAtTarget = V3Error::errorCount();
             navigateToTarget(m_target);
             if (!m_error) {
                 setProcessed(m_target);
@@ -1929,7 +1939,8 @@ class DPIOverrideBuilder final {
                           new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, selp}});
         return true;
     }
-    // Walk every module, so a read that reaches the target through a cross-module reference is seen
+    // Walk every module, so a read that reaches the target through a cross-module reference is
+    // seen
     template <typename Func>
     static void foreachModule(Func&& f) {
         for (AstNodeModule* modp = v3Global.rootp()->modulesp(); modp;
@@ -2571,8 +2582,10 @@ public:
                 const bool readViaArraySel
                     = !entry.elemIndex()
                       && std::any_of(
-                          entry.varRefps.begin(), entry.varRefps.end(),
-                          [](AstNodeVarRef* vr) { return VN_IS(vr->backp(), ArraySel); });
+                          entry.varRefps.begin(), entry.varRefps.end(), [](AstNodeVarRef* vr) {
+                              const AstArraySel* const aselp = VN_CAST(vr->backp(), ArraySel);
+                              return aselp && aselp->fromp() == vr;
+                          });
                 if (isArrayDType || readViaArraySel) {
                     ov->v3warn(E_UNSUPPORTED,
                                "DPI-hook target '"

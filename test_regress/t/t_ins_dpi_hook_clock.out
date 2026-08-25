@@ -2,8 +2,5 @@
    25 |   input logic clk,
       |               ^~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: t/t_ins_dpi_hook_clock.v:24:8: DPI-hook insertion of target 'top_module.a1' could not find 'var' in '__.instance.var'
-   24 | module module_a (
-      |        ^~~~~~~~
 %Error: Incomplete hook-insertion configuration for target 'top_module.a1.clk'; see the error above
 %Error: Exiting due to

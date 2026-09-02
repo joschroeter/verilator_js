@@ -6,4 +6,4 @@
 
 `verilator_config
 
-insert_dpihook -callback "cb_bitrange" -var "top_module.s.o" -bit-range "2:1"
+insert_dpihook -callback "cb_bitrange" -var "top_module.s.o"

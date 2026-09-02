@@ -8,14 +8,11 @@
 
 #include VM_PREFIX_INCLUDE
 #include "verilated.h"
-#include <svdpi.h>
 
 #include <string>
+#include <svdpi.h>
 #include <vector>
 
-// Whole-array callback: the unpacked array is presented as one packed mirror
-// {mem[0](MSB) .. mem[3](LSB)}, 32 bits. Inject element 1 = 0xEE in a time
-// window (element 1 occupies bits [(3-1)*8 +: 8] = [16 +: 8]); leave the rest.
 extern "C" int cb_array(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     unsigned v = value[0].aval;

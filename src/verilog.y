@@ -268,8 +268,6 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %token<fl>              yVLT_TRACING_ON             "tracing_on"
 %token<fl>              yVLT_VERILATOR_LIB          "verilator_lib"
 
-%token<fl>              yVLT_D_BITPOS   "--bit-pos"
-%token<fl>              yVLT_D_BITRANGE "--bit-range"
 %token<fl>              yVLT_D_BLOCK    "--block"
 %token<fl>              yVLT_D_CALLBACK "--callback"
 %token<fl>              yVLT_D_CONTENTS "--contents"
@@ -8464,14 +8462,6 @@ vltItem:
         |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING
                         { v3Global.setInsDPIHooks();
                                 V3Control::addHookInsCfg($<fl>1, *$3, *$5);
-                        }
-        |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING yVLT_D_BITPOS yaINTNUM
-                        { v3Global.setInsDPIHooks();
-                                V3Control::addHookInsCfg($<fl>1, *$3, *$5, $7->toSInt());
-                        }
-        |       yVLT_INSERT_DPIHOOK yVLT_D_CALLBACK yaSTRING yVLT_D_VAR yaSTRING yVLT_D_BITRANGE yaSTRING
-                        { v3Global.setInsDPIHooks();
-                                V3Control::addHookInsCfg($<fl>1, *$3, *$5, *$7);
                         }
         |       yVLT_COVERAGE_BLOCK_OFF vltDFile
                         { V3Control::addCoverageBlockOff(*$2, 0); }

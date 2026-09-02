@@ -6,4 +6,4 @@
 
 `verilator_config
 
-insert_dpihook -callback "cb_bitpos" -var "top_module.s.o" -bit-pos 1
+insert_dpihook -callback "cb_bitpos" -var "top_module.s.o"

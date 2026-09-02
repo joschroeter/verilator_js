@@ -8,9 +8,9 @@
 
 #include VM_PREFIX_INCLUDE
 #include "verilated.h"
-#include <svdpi.h>
 
 #include <string>
+#include <svdpi.h>
 #include <vector>
 
 extern "C" char cb_gen(int insID, svBit trigger, const svLogicVecVal* value) {

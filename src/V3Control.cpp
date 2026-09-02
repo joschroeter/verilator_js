@@ -866,33 +866,6 @@ public:
             return cost;
         }
     }
-    std::pair<std::optional<uint32_t>, std::optional<uint32_t>>
-    getBitRange(FileLine* fl, const string& bitRange) {
-        // Helper for parsing a bit range string of the form "x:y" and returning the start and end
-        // positions as a pair of integers
-        const auto pos = bitRange.find(':');
-        if (pos == string::npos) {
-            fl->v3error("Invalid bit range format: '" << bitRange << "'. Expected format 'x:y'.");
-            return {std::nullopt, std::nullopt};
-        }
-        const string leftStr = bitRange.substr(0, pos);
-        const string rightStr = bitRange.substr(pos + 1);
-        // Validate before converting: stoi would throw on non-numeric or
-        // out-of-range input
-        for (const string& s : {leftStr, rightStr}) {
-            if (!isDPIHookConfigNumber(s)) {
-                fl->v3error("Bit positions must be non-negative integers: '" << bitRange << "'.");
-                return {std::nullopt, std::nullopt};
-            }
-        }
-        const int left = std::stoi(leftStr);
-        const int right = std::stoi(rightStr);
-        if (right > left) {
-            v3warn(ASCRANGE,
-                   "Ascending bit range vector: left < right of bit range: " << bitRange);
-        }
-        return {static_cast<uint32_t>(left), static_cast<uint32_t>(right)};
-    }
     // Split a target path at its last dot into the instance prefix and the
     // variable name ("top.u.sig" -> {"top.u", "sig"})
     std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
@@ -928,37 +901,7 @@ public:
         const auto prefix = result.first;
         AccessPath accessPath;
         const auto varTarget = splitElemIndex(fl, result.second, accessPath);
-        // bitRangeLeft & bitRangeRight uninitialized since no bit range or bit position is
-        // targeted
-        m_hookInsCfg[prefix].push_back(
-            HookInsCfgEntry{std::nullopt, std::nullopt, callback, varTarget, accessPath});
-    }
-    void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
-                       const uint32_t bitPos) {
-        const auto result = splitPrefixAndVar(fl, target);
-        const auto prefix = result.first;
-        AccessPath accessPath;
-        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
-        // bitRangeLeft uninitialized since no bit range but a bit position is targeted
-        m_hookInsCfg[prefix].push_back(
-            HookInsCfgEntry{std::nullopt, bitPos, callback, varTarget, accessPath});
-    }
-    void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
-                       const string& bitRange) {
-        const auto result = splitPrefixAndVar(fl, target);
-        const auto prefix = result.first;
-        AccessPath accessPath;
-        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
-        const std::pair<std::optional<uint32_t>, std::optional<uint32_t>> bitRangePos
-            = getBitRange(fl, bitRange);
-        if (bitRangePos.first.has_value() && bitRangePos.second.has_value()) {
-            m_hookInsCfg[prefix].push_back(HookInsCfgEntry{bitRangePos.first.value(),
-                                                           bitRangePos.second.value(), callback,
-                                                           varTarget, accessPath});
-        } else {
-            // If the bit range is invalid, we should not proceed with adding the entry
-            return;
-        }
+        m_hookInsCfg[prefix].push_back(HookInsCfgEntry{callback, varTarget, accessPath});
     }
     std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg() { return m_hookInsCfg; }
 };
@@ -1035,16 +978,6 @@ void V3Control::addModulePragma(const string& module, VPragmaType pragma) {
 
 void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const string& target) {
     V3ControlResolver::s().addHookInsCfg(fl, insfunc, target);
-}
-
-void V3Control::addHookInsCfg(FileLine* fl, const string& callback, const string& target,
-                              const uint32_t bitPos) {
-    V3ControlResolver::s().addHookInsCfg(fl, callback, target, bitPos);
-}
-
-void V3Control::addHookInsCfg(FileLine* fl, const string& insFunc, const string& target,
-                              const string& bitRange) {
-    V3ControlResolver::s().addHookInsCfg(fl, insFunc, target, bitRange);
 }
 
 void V3Control::addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost) {

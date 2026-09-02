@@ -10,14 +10,13 @@
 import vltest_bootstrap
 
 test.scenarios('vlt')
-test.top_filename = "t/t_ins_dpi_hook.v"
+test.top_filename = "t/t_ins_dpi_hook_badbind.v"
 
 vlt_filename = "t/" + test.name + ".vlt"
 
-test.compile(fails=True,
-             make_main=False,
-             verilator_make_gmake=False,
-             v_flags2=["--timing", vlt_filename],
-             expect_filename=test.golden_filename)
+test.compile(make_main=False,
+             v_flags2=["--timing --exe", vlt_filename, test.pli_filename])
+
+test.execute(expect_filename=test.golden_filename)
 
 test.passes()

@@ -12,11 +12,10 @@
 #include <string>
 #include <vector>
 
-extern "C" char cb_bitrange(int insID, svBit trigger, int bitStartPos, int bitEndPos,
-                            const svLogicVecVal* value) {
+extern "C" char cb_bitrange(int insID, svBit trigger, const svLogicVecVal* value) {
     unsigned v = value[0].aval & 0xfU;
     if (insID == 1 && VL_TIME_Q() >= 20 && VL_TIME_Q() < 50) {
-        for (int b = bitEndPos; b <= bitStartPos; ++b) v ^= (1U << b);
+        for (int b = 1; b <= 2; ++b) v ^= (1U << b);
     }
     return static_cast<char>(v);
 }

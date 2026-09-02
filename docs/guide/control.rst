@@ -184,10 +184,6 @@ The grammar of control commands is as follows:
 
 .. option:: insert_dpihook -callback "<funcname>" -var "<hierpath>"
 
-.. option:: insert_dpihook -callback "<funcname>" -var "<hierpath>" -bit-pos <bit>
-
-.. option:: insert_dpihook -callback "<funcname>" -var "<hierpath>" -bit-range "<msb>:<lsb>"
-
    Creates a DPI hook for the specified signal, allowing the signal to be altered from C++ code.
    The signal to target is specified with the ``-var`` option containing the complete hierarchical path (e.g. ``top.cpu.regfile.data``).
    The ``-callback`` option defines the name of the imported DPI-C function.
@@ -210,11 +206,9 @@ The grammar of control commands is as follows:
    If this can not be guaranteed, the signal must use another callback function.
    Additionally a signal can only be hooked once.
 
-   The feature also provides optional configurations like ``-bit-pos``, which aims the hook at a single bit, or ``-bit-range``, which aims it at an
-   inclusive ``<msb>:<lsb>`` range of bits.
-   Both options are mutually exclusive, and each passes its positions to the callback as ``input int`` arguments ahead of the value.
-   The callback still receives and returns the whole signal, so it is the callback that applies the change to those bits.
-   If neither option is used, the whole signal is hooked.
+   The hook carries no information about specific bit positions or bit ranges. Instead it hands the whole singal to the callback and takes the whole
+   value back. Which specific bits or bit ranges a fault touches can be therefore decided in the callback, together with
+   the timing.
 
    The supported signal types are:
       - Packed types
@@ -226,13 +220,15 @@ The grammar of control commands is as follows:
       - Instances inside generate blocks
       - Interface signals
 
-   When the configuration is done for Verilator and the hook is inserted the cpp wrapper must enable the hook.
+   When the configuration is done for Verilator and the hook is inserted the cpp wrapper must bind the hook.
    This is done by using the ``DPIHOOK_PATH[i][j]`` and ``DPIHOOK_CASE_ID[i]`` ports.
    The first one needs to be filled with the path parts ending with the signal for ``[j]`` and if it is wanted to activate multiple faults then up to
-   four signal paths can be filled in ``[i]``.
+   four signal paths can be filled in ``[i]`` (we refer to this as a "slot").
    Additionally each signal path is assigned a case id, which selects the effect the callback function has on the hooked signal.
    Two paths may share an id, in which case the callback treats them alike.
    The case id is filled into ``DPIHOOK_CASE_ID[i]`` and is passed to the callback function as ``input int id``.
+
+   If a slot in the wrapper to bind a path does not match any existing path, the slot is reported wit a runtime warning.
 
    It is important to note that reads are redirected within the module declaring the target, for an
    interface signal in every module accessing it, and where a read reaches the signal through a

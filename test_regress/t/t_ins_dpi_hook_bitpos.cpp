@@ -8,15 +8,15 @@
 
 #include VM_PREFIX_INCLUDE
 #include "verilated.h"
-#include <svdpi.h>
 
 #include <string>
+#include <svdpi.h>
 #include <vector>
 
-extern "C" char cb_bitpos(int insID, svBit trigger, int bitPos, const svLogicVecVal* value) {
+extern "C" char cb_bitpos(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     unsigned v = value[0].aval & 0xfU;
-    if (insID == 1 && VL_TIME_Q() >= 20 && VL_TIME_Q() < 50) v ^= (1U << bitPos);
+    if (insID == 1 && VL_TIME_Q() >= 20 && VL_TIME_Q() < 50) v ^= (1U << 1);
     return static_cast<char>(v);
 }
 

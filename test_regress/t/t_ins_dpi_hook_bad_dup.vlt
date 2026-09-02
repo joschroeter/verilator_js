@@ -6,5 +6,5 @@
 
 `verilator_config
 
-insert_dpihook -callback "instrument_var" -var "top_module.s.o" -bit-pos 0
-insert_dpihook -callback "instrument_var2" -var "top_module.s.o" -bit-pos 4
+insert_dpihook -callback "instrument_var" -var "top_module.s.o"
+insert_dpihook -callback "instrument_var2" -var "top_module.s.o"

@@ -8,9 +8,9 @@
 
 #include VM_PREFIX_INCLUDE
 #include "verilated.h"
-#include <svdpi.h>
 
 #include <string>
+#include <svdpi.h>
 #include <vector>
 
 extern "C" int cb_struct(int insID, svBit trigger, const svLogicVecVal* value) {

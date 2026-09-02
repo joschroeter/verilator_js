@@ -8,12 +8,11 @@
 
 #include VM_PREFIX_INCLUDE
 #include "verilated.h"
-#include <svdpi.h>
 
 #include <string>
+#include <svdpi.h>
 #include <vector>
 
-// Wide fault callback: void, result delivered via an output argument.
 extern "C" void cb_wide(svLogicVecVal* result, int insID, svBit trigger,
                         const svLogicVecVal* value) {
     (void)trigger;

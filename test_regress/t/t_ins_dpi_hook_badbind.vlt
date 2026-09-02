@@ -6,4 +6,4 @@
 
 `verilator_config
 
-insert_dpihook -callback "instrument_var" -var "top_module.a1.out" -bit-range "-1:0"
+insert_dpihook -callback "cb_badbind" -var "top_module.s1.v"

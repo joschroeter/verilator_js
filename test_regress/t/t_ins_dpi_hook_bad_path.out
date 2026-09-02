@@ -1,4 +1,4 @@
-%Error: t/t_ins_dpi_hook_bad_path.v:12:11: DPI-hook insertion of target 'top_module.bi.p': a member path into an interface signal is not supported (target the whole signal, optionally with -bit-pos or -bit-range)
+%Error: t/t_ins_dpi_hook_bad_path.v:12:11: DPI-hook insertion of target 'top_module.bi.p': a member path into an interface signal is not supported (target the whole signal instead)
    12 | interface simple_if;
       |           ^~~~~~~~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.

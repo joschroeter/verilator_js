@@ -54,8 +54,6 @@ inline bool isDPIHookConfigNumber(const std::string& s) {
 }
 
 struct HookInsCfgEntry final {
-    std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
-    std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
     AccessPath accessPath;  // Member/index steps into the target var ("a.b[i]"); empty for scalars
@@ -91,10 +89,6 @@ public:
                                const string& match);
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
     static void addHookInsCfg(FileLine* fl, const string& callback, const string& target);
-    static void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
-                              uint32_t bitPos);
-    static void addHookInsCfg(FileLine* fl, const string& callback, const string& target,
-                              const string& bitRange);
     static std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);

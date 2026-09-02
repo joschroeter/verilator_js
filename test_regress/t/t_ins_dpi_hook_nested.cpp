@@ -8,20 +8,15 @@
 
 #include VM_PREFIX_INCLUDE
 #include "verilated.h"
-#include <svdpi.h>
 
 #include <string>
+#include <svdpi.h>
 #include <vector>
 
-// The array-of-struct is presented as one packed 32-bit mirror
-// {aos[0].x, aos[0].y, aos[1].x, aos[1].y} (MSB->LSB). Inject the LSB leaf
-// aos[1].y = 0xEE in a time window; leave the other leaves untouched.
 extern "C" int cb_nested(int insID, svBit trigger, const svLogicVecVal* value) {
     (void)trigger;
     unsigned v = value[0].aval;
-    if (insID == 1 && VL_TIME_Q() >= 20 && VL_TIME_Q() < 60) {
-        v = (v & ~0xffU) | 0xEEU;
-    }
+    if (insID == 1 && VL_TIME_Q() >= 20 && VL_TIME_Q() < 60) { v = (v & ~0xffU) | 0xEEU; }
     return static_cast<int>(v);
 }
 

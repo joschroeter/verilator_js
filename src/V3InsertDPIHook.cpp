@@ -100,8 +100,6 @@ static bool aggIsLeafDType(AstNodeDType* dtp) {
     return dtp->basicp() != nullptr;
 }
 struct HookInsertEntry final {
-    std::optional<uint32_t> bitRangeLeft;  // Left position of a bit range that is targeted
-    std::optional<uint32_t> bitRangeRight;  // Right position of a bit range that is targeted
     std::string callback;  // Name of the DPI callback function to insert
     std::string varTarget;  // Target variable name within the module
     AccessPath accessPath;  // Member/index steps into the target var ("a.b[i]"); empty for scalars
@@ -117,11 +115,6 @@ struct HookInsertEntry final {
     AstVar* aggregateVarp = nullptr;  // The original unpacked aggregate var
     std::string genScope;  // Generate-block prefix in source notation ("lane[0]")
     std::string origTarget;  // Target as the user specified
-    // Which bit selection the target carries, decoded once here because the
-    // callback's port list and its call arguments must agree: -bit-pos sets only
-    // the right position, -bit-range sets both, and neither means whole-signal
-    bool hasBitPos() const { return !bitRangeLeft.has_value() && bitRangeRight.has_value(); }
-    bool hasBitRange() const { return bitRangeLeft.has_value() && bitRangeRight.has_value(); }
     std::optional<uint32_t> elemIndex() const {
         if (accessPath.size() == 1 && accessPath.front().isIndex) return accessPath.front().index;
         return std::nullopt;
@@ -196,6 +189,28 @@ struct PathFilterResult final {
     AstArraySel* partArraySelp = nullptr;  // Inner arraysel: hookPath[i]
     AstArraySel* targetArraySelp = nullptr;  // Outer arraysel: hookPath[i][0]
 };
+// A target path provided by the testbench that is not matched by any of the case item provides
+// a warning
+static void appendDfltCase(const std::unordered_map<AstNodeModule*, AstCase*>& caseCache) {
+    for (const auto& [modp, casep] : caseCache) {
+        if (!casep) continue;
+        FileLine* const fl = casep->fileline();
+        const AstVarRef* const condRefp = VN_CAST(casep->exprp(), VarRef);
+        if (!condRefp) continue;  // Not one of ours
+        AstVar* const targetVarp = condRefp->varp();
+        AstConst* const emptyp = new AstConst{fl, AstConst::VerilogStringLiteral{}, ""};
+        AstNeqN* const namedp = new AstNeqN{fl, new AstVarRef{fl, targetVarp, VAccess::READ},
+                                            new AstCvtPackString{fl, emptyp}};
+        AstDisplay* const warnp
+            = new AstDisplay{fl, VDisplayType::DT_WARNING,
+                             "DPI-hook: bound path part '%0s' matches nothing in '"
+                                 + modp->prettyName() + "'; this target stays inactive",
+                             nullptr, new AstVarRef{fl, targetVarp, VAccess::READ}};
+        // A warning provides the simulation time
+        warnp->fmtp()->timeunit(modp->timeunit());
+        casep->addItemsp(new AstCaseItem{fl, nullptr, new AstIf{fl, namedp, warnp}});
+    }
+}
 static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
     AstNodeModule* const modp = cfg.modp;
     FileLine* const fl = modp->fileline();
@@ -620,7 +635,7 @@ class HookInsTargetFndr final {
                     "DPI-hook insertion of target '"
                     << m_target
                     << "': a member path into an interface signal is not supported (target the"
-                       " whole signal, optionally with -bit-pos or -bit-range)");
+                       " whole signal instead)");
             } else {
                 modp->fileline()->v3error("DPI-hook insertion of target '"
                                           << m_target
@@ -1637,28 +1652,6 @@ class DPIOverrideBuilder final {
         dpiTriggerp->funcLocal(true);
         funcp->addStmtsp(dpiTriggerp);
 
-        if (m_targetEntry.hasBitPos()) {
-            AstVar* const bitPos
-                = new AstVar{funcp->fileline(), VVarType::PORT, "bitPos", m_idDTypep};
-            bitPos->direction(VDirection::INPUT);
-            bitPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
-            bitPos->funcLocal(true);
-            funcp->addStmtsp(bitPos);
-        } else if (m_targetEntry.hasBitRange()) {
-            AstVar* const bitStartPos
-                = new AstVar{funcp->fileline(), VVarType::PORT, "bitStartPos", m_idDTypep};
-            bitStartPos->direction(VDirection::INPUT);
-            bitStartPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
-            bitStartPos->funcLocal(true);
-            AstVar* const bitEndPos
-                = new AstVar{funcp->fileline(), VVarType::PORT, "bitEndPos", m_idDTypep};
-            bitEndPos->direction(VDirection::INPUT);
-            bitEndPos->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
-            bitEndPos->funcLocal(true);
-            funcp->addStmtsp(bitStartPos);
-            funcp->addStmtsp(bitEndPos);
-        }
-
         AstVar* const varXFunc = drivingVarp->cloneTree(false);
         varXFunc->direction(VDirection::INPUT);
         varXFunc->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
@@ -1674,22 +1667,6 @@ class DPIOverrideBuilder final {
             = new AstVarRef{funcRefp->fileline(), m_dpiTriggerp, VAccess::READ};
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", caseIdRefp});
         funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", triggerRefp});
-        if (m_targetEntry.hasBitPos()) {
-            AstConst* const constBitPosp
-                = new AstConst{funcRefp->fileline(), AstConst::WidthedValue{}, 32,
-                               m_targetEntry.bitRangeRight.value()};
-            constBitPosp->dtypeChgSigned();
-            funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitPosp});
-        } else if (m_targetEntry.hasBitRange()) {
-            AstConst* const constBitStartPosp
-                = new AstConst{funcRefp->fileline(), m_targetEntry.bitRangeLeft.value()};
-            constBitStartPosp->dtypeChgSigned();
-            AstConst* const constBitEndPosp
-                = new AstConst{funcRefp->fileline(), m_targetEntry.bitRangeRight.value()};
-            constBitEndPosp->dtypeChgSigned();
-            funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitStartPosp});
-            funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", constBitEndPosp});
-        }
         if (drivingRhsp) {
             funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", drivingRhsp});
             return;
@@ -2605,18 +2582,14 @@ public:
                                                              selResMap,
                                                              targetLoopVarCache};
                     insDPIOverrideBuilder.insert();
-                } else if (priorp->callback != entry.callback
-                           || priorp->bitRangeLeft != entry.bitRangeLeft
-                           || priorp->bitRangeRight != entry.bitRangeRight) {
-                    // A signal carries at most one hook
-                    ov->v3error("DPI-hook target '"
-                                << entry.origTarget << "' is already hooked with callback '"
-                                << priorp->callback
-                                << "'; a signal can carry only one hook - select the fault"
-                                   " (bit position, behavior) via case ids in that callback");
+                } else if (priorp->callback != entry.callback) {
+                    ov->v3error("DPI-hook target '" << entry.origTarget
+                                                    << "' is already hooked with callback '"
+                                                    << priorp->callback << "'");
                 }
             }
         }
+        appendDfltCase(caseCache);
     }
 };
 //##################################################################################
@@ -2627,8 +2600,6 @@ static std::map<std::string, HookInsertTarget> buildWorkingCfg() {
         HookInsertTarget& targetp = insCfg[target];
         for (const HookInsCfgEntry& cfgEntry : cfgEntries) {
             HookInsertEntry entry;
-            entry.bitRangeLeft = cfgEntry.bitRangeLeft;
-            entry.bitRangeRight = cfgEntry.bitRangeRight;
             entry.callback = cfgEntry.callback;
             entry.varTarget = cfgEntry.varTarget;
             entry.accessPath = cfgEntry.accessPath;

@@ -299,6 +299,34 @@ constexpr VAssertType::en operator|(VAssertType::en lhs, VAssertType::en rhs) {
 
 // ######################################################################
 
+class VPropStrength final {
+public:
+    enum en : uint8_t {
+        DEFAULT = 0,  // Resolve from assertion/coverage context
+        WEAK,
+        STRONG,
+    };
+    enum en m_e;
+    // cppcheck-suppress noExplicitConstructor
+    constexpr VPropStrength(en _e)
+        : m_e{_e} {}
+    const char* ascii() const {
+        static const char* const names[] = {"default", "weak", "strong"};
+        return names[m_e];
+    }
+};
+constexpr bool operator==(const VPropStrength& lhs, const VPropStrength& rhs) {
+    return lhs.m_e == rhs.m_e;
+}
+constexpr bool operator==(const VPropStrength& lhs, VPropStrength::en rhs) {
+    return lhs.m_e == rhs;
+}
+constexpr bool operator!=(const VPropStrength& lhs, VPropStrength::en rhs) {
+    return lhs.m_e != rhs;
+}
+
+// ######################################################################
+
 class VAttrType final {
 public:
     // clang-format off
@@ -1321,6 +1349,7 @@ public:
     bool isNonOutput() const {
         return m_e == INPUT || m_e == INOUT || m_e == REF || m_e == CONSTREF;
     }
+    bool isOutputish() const VL_MT_SAFE { return m_e == OUTPUT || m_e == INOUT; }
     bool isReadOnly() const VL_MT_SAFE { return m_e == INPUT || m_e == CONSTREF; }
     bool isWritable() const VL_MT_SAFE { return m_e == OUTPUT || m_e == INOUT || m_e == REF; }
     bool isRef() const VL_MT_SAFE { return m_e == REF; }

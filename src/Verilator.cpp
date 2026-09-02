@@ -65,6 +65,7 @@
 #include "V3HierBlock.h"
 #include "V3Inline.h"
 #include "V3InlineCFuncs.h"
+#include "V3InsertDPIHook.h"
 #include "V3Inst.h"
 #include "V3Interface.h"
 #include "V3LibMap.h"
@@ -96,7 +97,6 @@
 #include "V3Sampled.h"
 #include "V3Sched.h"
 #include "V3Scope.h"
-#include "V3Scoreboard.h"
 #include "V3Slice.h"
 #include "V3Split.h"
 #include "V3SplitVar.h"
@@ -223,6 +223,12 @@ static void process() {
         V3WidthCommit::widthCommit(v3Global.rootp());
         v3Global.assertDTypesResolved(true);
         v3Global.widthMinUsage(VWidthMinUsage::MATCHES_WIDTH);
+
+        // Hook-insert design with the configurations given in .vlt file
+        if (v3Global.insDPIHooks()) {
+            v3Global.dpi(true);
+            V3InsertDPIHook::hookInsert(v3Global.rootp());
+        }
 
         // End of elaboration
         V3Stats::addStatPerf(V3Stats::STAT_WALLTIME_ELAB, elabWallTime.deltaTime());
@@ -737,6 +743,7 @@ static bool verilate(const string& argString) {
     // and after removing files as may make debug output)
     VBasicDTypeKwd::selfTest();
     if (v3Global.opt.debugSelfTest()) {
+        AstClassRefDType::selfTest();
         V3Os::selfTest();
         V3Number::selfTest();
         VCMethod::selfTest();
@@ -744,8 +751,6 @@ static bool verilate(const string& argString) {
         VHashSha256::selfTest();
         VSpellCheck::selfTest();
         V3Graph::selfTest();
-        V3ScoreboardBase::selfTest();
-        V3Order::selfTestParallel();
         V3ExecGraph::selfTest();
         V3PreShell::selfTest();
         V3Broken::selfTest();

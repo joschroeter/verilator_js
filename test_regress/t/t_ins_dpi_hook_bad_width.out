@@ -1,0 +1,5 @@
+%Error: t/t_ins_dpi_hook.v:72:22: DPI-hook callback 'cb' is reused for a target of width 8, but was already used for width 128; use a distinct callback name per signal width
+   72 |   output logic [7:0] out
+      |                      ^~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: Exiting due to

@@ -318,6 +318,7 @@ private:
     int         m_convergeLimit = 10000;  // main switch: --converge-limit
     int         m_coverageMaxWidth = 256; // main switch: --coverage-max-width
     int         m_debugAllocRandom = 0;  // main switch: --debug-alloc-random <seed>
+    int         m_dpihookTriggerStep = 1;  // main switch: --dpihook-trigger-step <n>
     int         m_expandLimit = 256;  // main switch: --expand-limit
     int         m_gateStmts = 100;    // main switch: --gate-stmts
     int         m_hierChild = 0;      // main switch: --hierarchical-child
@@ -402,7 +403,6 @@ private:
     bool m_fConstBitOpTree;  // main switch: -fno-const-bit-op-tree constant bit op tree
     bool m_fConstEager = true;  // main switch: -fno-const-eagerly run V3Const during passes
     bool m_fDedupe;      // main switch: -fno-dedupe: logic deduplication
-    bool m_fDfgBreakCycles = true; // main switch: -fno-dfg-break-cycles
     bool m_fDfgPeephole = true; // main switch: -fno-dfg-peephole
     bool m_fDfgPushDownSels = true; // main switch: -fno-dfg-push-down-sels
     bool m_fDfg;         // main switch: -fno-dfg
@@ -624,6 +624,7 @@ public:
     int coverageExprMax() const { return m_coverageExprMax; }
     int coverageMaxWidth() const { return m_coverageMaxWidth; }
     int debugAllocRandom() const { return m_debugAllocRandom; }
+    int dpihookTriggerStep() const { return m_dpihookTriggerStep; }
     bool dumpTreeAddrids() const VL_MT_SAFE;
     int expandLimit() const { return m_expandLimit; }
     int gateStmts() const { return m_gateStmts; }
@@ -743,7 +744,6 @@ public:
     bool fConstEager() const { return m_fConstEager; }
     bool fDedupe() const { return m_fDedupe; }
     bool fDfg() const { return m_fDfg; }
-    bool fDfgBreakCycles() const { return m_fDfgBreakCycles; }
     bool fDfgPeephole() const { return m_fDfgPeephole; }
     bool fDfgPushDownSels() const { return m_fDfgPushDownSels; }
     bool fDfgSynthesizeAll() const { return m_fDfgSynthesizeAll; }

@@ -801,6 +801,7 @@ class V3ControlResolver final {
     uint8_t m_mode = NONE;
     std::unordered_map<string, V3ControlResolverHierWorkerEntry> m_hierWorkers;
     FileLine* m_profileFileLine = nullptr;
+    std::map<std::string, std::vector<HookInsCfgEntry>> m_hookInsCfg;
 
     V3ControlResolver() = default;
     ~V3ControlResolver() = default;
@@ -865,6 +866,44 @@ public:
             return cost;
         }
     }
+    // Split a target path at its last dot into the instance prefix and the
+    // variable name ("top.u.sig" -> {"top.u", "sig"})
+    std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
+        const auto pos = target.rfind('.');
+        if (pos == string::npos) {
+            fl->v3error("DPI-hook insertion of target variable '"
+                        << target << "' must be qualified with at least the top module");
+            return {target, ""};
+        }
+        const string prefix = target.substr(0, pos);
+        const string varTarget = target.substr(pos + 1);
+        return {prefix, varTarget};
+    }
+    string splitElemIndex(FileLine* fl, const string& varTarget, AccessPath& accessPathr) {
+        const auto open = varTarget.find('[');
+        if (open == string::npos) return varTarget;
+        if (varTarget.back() != ']') {
+            fl->v3error("Invalid element select in DPI-hook target: '"
+                        << varTarget << "'. Expected format 'name[i]'.");
+            return varTarget;
+        }
+        const string index = varTarget.substr(open + 1, varTarget.size() - open - 2);
+        if (!isDPIHookConfigNumber(index)) {
+            fl->v3error("Element index must be a non-negative integer: '" << varTarget << "'.");
+            return varTarget.substr(0, open);
+        }
+        accessPathr.push_back(AccessStep{true, static_cast<uint32_t>(std::stoul(index)), ""});
+        return varTarget.substr(0, open);
+    }
+    // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
+    void addHookInsCfg(FileLine* fl, const string& callback, const string& target) {
+        const auto result = splitPrefixAndVar(fl, target);
+        const auto prefix = result.first;
+        AccessPath accessPath;
+        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
+        m_hookInsCfg[prefix].push_back(HookInsCfgEntry{callback, varTarget, accessPath});
+    }
+    std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg() { return m_hookInsCfg; }
 };
 
 //######################################################################
@@ -935,6 +974,10 @@ void V3Control::addInline(FileLine* fl, const string& module, const string& ftas
 
 void V3Control::addModulePragma(const string& module, VPragmaType pragma) {
     V3ControlResolver::s().modules().at(module).addModulePragma(pragma);
+}
+
+void V3Control::addHookInsCfg(FileLine* fl, const string& insfunc, const string& target) {
+    V3ControlResolver::s().addHookInsCfg(fl, insfunc, target);
 }
 
 void V3Control::addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost) {
@@ -1093,6 +1136,9 @@ FileLine* V3Control::getHierWorkersFileLine(const string& model) {
 const V3Control::FsmRegisterWrapper* V3Control::getFsmRegisterWrapper(const string& module) {
     V3ControlModule* const modp = V3ControlResolver::s().modules().resolve(module);
     return modp ? modp->fsmRegisterWrapperp() : nullptr;
+}
+std::map<string, std::vector<HookInsCfgEntry>>& V3Control::getHookInsCfg() {
+    return V3ControlResolver::s().getHookInsCfg();
 }
 uint64_t V3Control::getProfileData(const string& hierDpi) {
     return V3ControlResolver::s().getProfileData(hierDpi);

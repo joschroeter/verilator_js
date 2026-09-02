@@ -486,6 +486,15 @@ Summary:
    name or location of the emitted DPI header file, it is output in
    :vlopt:`--Mdir` as it would be without this option.
 
+.. option:: --dpihook-trigger-step <steps>
+
+   Set how often the periodic evaluation trigger of an inserted DPI hook
+   fires, in simulation time steps. Defaults to 1, meaning the hook is
+   re-evaluated every step; larger values re-evaluate less often, trading
+   temporal resolution of the injected behavior for simulation speed. Must be
+   at least 1. Only has an effect when a configuration file declares at least
+   one `insert_dpihook` directive.
+
 .. option:: --dump-<srcfile>
 
    Rarely needed - for developer use. Enable all dumping in the given
@@ -714,6 +723,10 @@ Summary:
    :vlopt:`-fno-dfg-scoped`.
 
 .. option:: -fno-dfg-break-cycles
+
+   Deprecated and has no effect (ignored).
+
+   In versions before 5.052:
 
    Rarely needed. Disable breaking combinational cycles during DFG.
 

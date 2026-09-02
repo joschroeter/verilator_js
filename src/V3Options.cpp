@@ -1420,6 +1420,14 @@ void V3Options::parseOptsList(FileLine* fl, const string& optdir, int argc,
         m_diagnosticsSarif = true;
     });
     DECL_OPTION("-dpi-hdr-only", OnOff, &m_dpiHdrOnly);
+    DECL_OPTION("-dpihook-trigger-step", CbVal, [this, fl](const char* valp) {
+        const int step = std::atoi(valp);
+        if (step < 1) {
+            fl->v3error("--dpihook-trigger-step must be >= 1 (got " << valp << ")");
+        } else {
+            m_dpihookTriggerStep = step;
+        }
+    });
     DECL_OPTION("-dump-", CbPartialMatch, [this](const char* optp) {
         m_dumpLevel[optp] = 3;
     }).notForRerun();
@@ -1476,7 +1484,9 @@ void V3Options::parseOptsList(FileLine* fl, const string& optdir, int argc,
     DECL_OPTION("-fdead-cells", FOnOff, &m_fDeadCells);
     DECL_OPTION("-fdedup", FOnOff, &m_fDedupe);
     DECL_OPTION("-fdfg", CbFOnOff, [this](bool flag) { m_fDfg = flag; });
-    DECL_OPTION("-fdfg-break-cycles", FOnOff, &m_fDfgBreakCycles);
+    DECL_OPTION("-fdfg-break-cycles", CbFOnOff, [fl](bool) {
+        fl->v3warn(DEPRECATED, "Option '-fno-dfg-break-cycles' is deprecated and has no effect");
+    });
     DECL_OPTION("-fdfg-peephole", FOnOff, &m_fDfgPeephole);
     DECL_OPTION("-fdfg-peephole-", CbPartialMatch, [this](const char* optp) {  //
         m_fDfgPeepholeDisabled.erase(optp);

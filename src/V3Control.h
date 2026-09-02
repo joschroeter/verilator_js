@@ -25,7 +25,39 @@
 #include "V3FileLine.h"
 #include "V3Mutex.h"
 
+#include <optional>
+#include <string>
+#include <vector>
+
 //######################################################################
+// Declarative hook-insertion configuration parsed from the .vlt file.
+
+// One step of an access path into a target variable: either an unpacked-array
+// element index ("[i]") or a struct/union member name (".name"); A plain scalar
+// target has an empty path; "mem[i]" is a single index step
+struct AccessStep final {
+    bool isIndex = false;  // true: array index; false: member name
+    uint32_t index = 0;  // Array element index, when isIndex
+    std::string member;  // Member name, when !isIndex
+    bool operator==(const AccessStep& other) const {
+        return isIndex == other.isIndex && index == other.index && member == other.member;
+    }
+};
+using AccessPath = std::vector<AccessStep>;
+
+// Longest run of digits accepted in the configuration (bit position, bit
+// range bound, element index) is nine digits (always fit a 32-bit int)
+static constexpr size_t DPIHOOK_MAX_NUM_DIGITS = 9;
+inline bool isDPIHookConfigNumber(const std::string& s) {
+    return !s.empty() && s.size() <= DPIHOOK_MAX_NUM_DIGITS
+           && s.find_first_not_of("0123456789") == std::string::npos;
+}
+
+struct HookInsCfgEntry final {
+    std::string callback;  // Name of the DPI callback function to insert
+    std::string varTarget;  // Target variable name within the module
+    AccessPath accessPath;  // Member/index steps into the target var ("a.b[i]"); empty for scalars
+};
 
 class V3Control final {
 public:
@@ -56,6 +88,8 @@ public:
     static void addIgnoreMatch(V3ErrorCode code, const string& filename, const string& contents,
                                const string& match);
     static void addInline(FileLine* fl, const string& module, const string& ftask, bool on);
+    static void addHookInsCfg(FileLine* fl, const string& callback, const string& target);
+    static std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg();
     static void addModulePragma(const string& module, VPragmaType pragma);
     static void addProfileData(FileLine* fl, const string& hierDpi, uint64_t cost);
     static void addProfileData(FileLine* fl, const string& model, const string& key,

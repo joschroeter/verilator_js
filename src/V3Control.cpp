@@ -886,10 +886,29 @@ public:
         const string varTarget = target.substr(pos + 1);
         return {prefix, varTarget};
     }
+    string splitElemIndex(FileLine* fl, const string& varTarget, AccessPath& accessPath) {
+        const auto open = varTarget.find('[');
+        if (open == string::npos) return varTarget;
+        if (varTarget.back() != ']') {
+            fl->v3error("Invalid element select in DPI-hook target: '"
+                        << varTarget << "'. Expected format 'name[i]'.");
+            return varTarget;
+        }
+        const string index = varTarget.substr(open + 1, varTarget.size() - open - 2);
+        if (!isDPIHookConfigNumber(index)) {
+            fl->v3error("Element index must be a non-negative integer: '" << varTarget << "'.");
+            return varTarget.substr(0, open);
+        }
+        accessPath.push_back(StepIntoTarget{true, static_cast<uint32_t>(std::stoul(index)), ""});
+        return varTarget.substr(0, open);
+    }
     // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
     void addHookInsCfg(FileLine* fl, const string& callback, const string& target) {
         const auto result = splitPrefixAndVar(fl, target);
-        m_hookInsCfg[result.first].push_back(HookInsCfgEntry{callback, result.second});
+        const auto prefix = result.first;
+        AccessPath accessPath;
+        const auto varTarget = splitElemIndex(fl, result.second, accessPath);
+        m_hookInsCfg[prefix].push_back(HookInsCfgEntry{callback, varTarget, accessPath});
     }
     std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg() { return m_hookInsCfg; }
 };

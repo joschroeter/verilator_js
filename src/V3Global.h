@@ -194,6 +194,7 @@ class V3Global final {
     bool m_hasForceableSignals = false;  // Need to apply V3Force pass
     bool m_hasAssignDeassign = false;  // Need to apply V3Force pass for assign/deassign statements
     bool m_hasSystemCSections = false;  // Has AstSystemCSection that need to be emitted
+    bool m_insDPIHooks = false;  // Insert DPI hooks into the model
     bool m_useParallelBuild = false;  // Use parallel build for model
     bool m_useRandSequence = false;  // Has `randsequence`
     bool m_useCovergroup = false;  // Has covergroup declarations
@@ -279,6 +280,8 @@ public:
     void setUsesForce() { m_usesForce = true; }
     bool hasSystemCSections() const VL_MT_SAFE { return m_hasSystemCSections; }
     void setHasSystemCSections() { m_hasSystemCSections = true; }
+    bool insDPIHooks() const { return m_insDPIHooks; }
+    void setInsDPIHooks() { m_insDPIHooks = true; }
     V3HierGraph* hierGraphp() const { return m_hierGraphp; }
     void hierGraphp(V3HierGraph* graphp) { m_hierGraphp = graphp; }
     bool useParallelBuild() const { return m_useParallelBuild; }

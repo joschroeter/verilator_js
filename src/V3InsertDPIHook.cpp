@@ -26,9 +26,39 @@
 
 #include "V3InsertDPIHook.h"
 
+#include "V3Control.h"
+
 VL_DEFINE_DEBUG_FUNCTIONS;
+
+struct HookInsertEntry final {
+    string callback;  // Name of the DPI callback function to insert
+    string varTarget;  // Target variable name within the module
+    string origTarget;  // Target as the user specified
+};
+struct HookInsertTarget final {
+    std::vector<HookInsertEntry> entries;  // All hook insertion entries for this target
+};
+
+//######################################################################
+// Hook-insertion class functions
+static std::map<string, HookInsertTarget> buildWorkingCfg() {
+    std::map<string, HookInsertTarget> insCfg;
+    for (const auto& [targetName, cfgEntries] : V3Control::getHookInsCfg()) {
+        HookInsertTarget& target = insCfg[targetName];
+        for (const HookInsCfgEntry& cfgEntry : cfgEntries) {
+            HookInsertEntry entry;
+            entry.callback = cfgEntry.callback;
+            entry.varTarget = cfgEntry.varTarget;
+            entry.origTarget = targetName + "." + cfgEntry.varTarget;
+            target.entries.push_back(std::move(entry));
+        }
+    }
+    return insCfg;
+}
 
 void V3InsertDPIHook::hookInsert(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
+    std::map<string, HookInsertTarget> insCfg = buildWorkingCfg();
+    UINFO(4, "DPI-hook targets resolved from cfg: " << insCfg.size() << endl);
     V3Global::dumpCheckGlobalTree("hookInsertFunction", 0, dumpTreeEitherLevel() >= 3);
 }

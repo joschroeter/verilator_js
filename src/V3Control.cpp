@@ -891,6 +891,7 @@ public:
         const auto result = splitPrefixAndVar(fl, target);
         m_hookInsCfg[result.first].push_back(HookInsCfgEntry{callback, result.second});
     }
+    std::map<string, std::vector<HookInsCfgEntry>>& getHookInsCfg() { return m_hookInsCfg; }
 };
 
 //######################################################################
@@ -1123,6 +1124,9 @@ FileLine* V3Control::getHierWorkersFileLine(const string& model) {
 const V3Control::FsmRegisterWrapper* V3Control::getFsmRegisterWrapper(const string& module) {
     V3ControlModule* const modp = V3ControlResolver::s().modules().resolve(module);
     return modp ? modp->fsmRegisterWrapperp() : nullptr;
+}
+std::map<string, std::vector<HookInsCfgEntry>>& V3Control::getHookInsCfg() {
+    return V3ControlResolver::s().getHookInsCfg();
 }
 uint64_t V3Control::getProfileData(const string& hierDpi) {
     return V3ControlResolver::s().getProfileData(hierDpi);

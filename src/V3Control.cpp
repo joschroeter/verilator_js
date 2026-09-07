@@ -801,6 +801,7 @@ class V3ControlResolver final {
     uint8_t m_mode = NONE;
     std::unordered_map<string, V3ControlResolverHierWorkerEntry> m_hierWorkers;
     FileLine* m_profileFileLine = nullptr;
+    std::map<string, std::vector<HookInsCfgEntry>> m_hookInsCfg;
 
     V3ControlResolver() = default;
     ~V3ControlResolver() = default;
@@ -872,6 +873,24 @@ public:
         UINFO(9, "Evaluating cost: " << cost);
         return cost;
     }
+    // Split a target path at its last dot into the instance prefix and the
+    // variable name ("top.u.sig" -> {"top.u", "sig"})
+    std::pair<string, string> splitPrefixAndVar(FileLine* fl, const string& target) {
+        const auto pos = target.rfind('.');
+        if (pos == string::npos) {
+            fl->v3error("DPI-hook insertion of target variable '"
+                        << target << "' must be qualified with at least the top module");
+            return {target, ""};
+        }
+        const string prefix = target.substr(0, pos);
+        const string varTarget = target.substr(pos + 1);
+        return {prefix, varTarget};
+    }
+    // Add the hook-insertion config data to the map to create the initial map (Used in verilog.y)
+    void addHookInsCfg(FileLine* fl, const string& callback, const string& target) {
+        const auto result = splitPrefixAndVar(fl, target);
+        m_hookInsCfg[result.first].push_back(HookInsCfgEntry{callback, result.second});
+    }
 };
 
 //######################################################################
@@ -912,6 +931,10 @@ void V3Control::addFsmRegisterWrapper(FileLine* fl, const string& module, const 
 
     const FsmRegisterWrapper desc{module, d, q, clock, reset, resetValue};
     V3ControlResolver::s().modules().at(module).setFsmRegisterWrapper(fl, desc);
+}
+
+void V3Control::addHookInsCfg(FileLine* fl, const string& callback, const string& target) {
+    V3ControlResolver::s().addHookInsCfg(fl, callback, target);
 }
 
 void V3Control::addIgnore(V3ErrorCode code, bool on, const string& filename, int min, int max) {

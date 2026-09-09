@@ -182,6 +182,59 @@ The grammar of control commands is as follows:
 
    Same as :option:`/*verilator&32;no_inline_task*/` metacomment.
 
+.. option:: insert_dpihook -callback "<funcname>" -var "<hierpath>"
+
+   Creates a DPI hook for the specified signal, allowing the signal to be altered from C++ code.
+   The signal to target is specified with the ``-var`` option containing the complete hierarchical path (e.g. ``top.cpu.regfile.data``).
+   The ``-callback`` option defines the name of the imported DPI-C function.
+   A manual DPI hook integration would look like this:
+
+   .. code-block:: sv
+
+      import "DPI-C" function logic [W-1:0] my_hook(
+          input int id, input bit trigger, input logic [W-1:0] value);
+
+   This DPI hook is (re)evaluated whenever one of its input signals changes.
+   To ensure a (re)evaluation even when the targeted signal does not change, a periodic evaluation trigger is implemented.
+   This trigger can be controlled by :vlopt:`--dpihook-trigger-step`.
+
+   There are some special cases to consider when using DPI hooks.
+   The callback function must return a value of the same width as the hooked signal.
+   A target wider than 64 bits cannot be returned, and instead takes a
+   ``void`` callback and needs a helper signal defined, which is also added as first argument, e.g. ``output logic [W-1:0] result``.
+   If multiple signals are hooked to the same callback, the callback must return a value of the same width as the other hooked signals.
+   If this can not be guaranteed, the signal must use another callback function.
+   Additionally a signal can only be hooked once.
+
+   The hook carries no information about specific bit positions or bit ranges. Instead it hands the whole signal to the callback and takes the whole
+   value back. Which specific bits or bit ranges a fault touches can therefore be decided in the callback, together with
+   the timing.
+
+   The following targets are supported:
+
+   * Packed types, including targets wider than 64 bits
+   * Unpacked aggregates
+   * Aggregate leaves addressed by path
+   * Unpacked-array elements
+   * Signals in generate scopes
+   * Signals in instances inside generate blocks
+   * Interface signals
+
+   When the configuration is done for Verilator and the hook is inserted the C++ wrapper must bind the hook.
+   This is done by using the ``DPIHOOK_PATH[i][j]`` and ``DPIHOOK_CASE_ID[i]`` ports.
+   The first one needs to be filled with the path parts ending with the signal for ``[j]`` and if it is wanted to activate multiple faults then up to
+   four signal paths can be filled in ``[i]``. Each such entry is referred to as a slot.
+   Additionally each signal path is assigned a case id, which selects the effect the callback function has on the hooked signal.
+   Two paths may share an id, in which case the callback treats them alike.
+   The case id is filled into ``DPIHOOK_CASE_ID[i]`` and is passed to the callback function as ``input int id``.
+
+   If a slot in the wrapper to bind a path does not match any existing path, the slot is reported with a runtime warning.
+
+   It is important to note that reads are redirected within the module declaring the target, for an
+   interface signal in every module accessing it, and where a read reaches the signal through a
+   cross-module hierarchical reference.
+   The changing effect propagates outwards through ports and interface connections.
+
 .. option:: isolate_assignments -module "<modulename>" -function "<fname>"
 
 .. option:: isolate_assignments -module "<modulename>" [-function "<funcname>"] -var "<signame>"

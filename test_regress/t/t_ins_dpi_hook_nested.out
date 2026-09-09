@@ -1,0 +1,8 @@
+$[0| idx: 0 rd: 00 a1y: 1b a0x: 0a]
+$[1| idx: 1 rd: 0b a1y: 1b a0x: 0a]
+$[2| idx: 2 rd: 1b a1y: ee a0x: 0a]
+$[3| idx: 3 rd: 0b a1y: ee a0x: 0a]
+$[4| idx: 0 rd: ee a1y: ee a0x: 0a]
+$[5| idx: 1 rd: 0b a1y: ee a0x: 0a]
+$[6| idx: 2 rd: ee a1y: 1b a0x: 0a]
+*-* All Finished *-*

@@ -1,0 +1,8 @@
+$[0| addr: 0 rd: 00 m1: 11 m3: 33]
+$[1| addr: 1 rd: 00 m1: 11 m3: 33]
+$[2| addr: 2 rd: 11 m1: ee m3: 33]
+$[3| addr: 3 rd: 22 m1: ee m3: 33]
+$[4| addr: 0 rd: 33 m1: ee m3: 33]
+$[5| addr: 1 rd: 00 m1: ee m3: 33]
+$[6| addr: 2 rd: ee m1: 11 m3: 33]
+*-* All Finished *-*

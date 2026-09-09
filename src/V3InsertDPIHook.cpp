@@ -36,7 +36,15 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 // array is sized to this many slots, and the loop variable indexing into it is sized to match.
 static constexpr int DPIHOOK_MAX_TARGETS = 4;
 static constexpr int DPIHOOK_MAX_TARGETS_BITS = 2;  // ceil(log2(DPIHOOK_MAX_TARGETS))
+// Widest value a DPI function may return (IEEE 1800 35.5.5) (wider targets use
+// a task with an output argument instead)
+static constexpr int DPIHOOK_MAX_FUNC_WIDTH = 64;
 
+struct SelResEntry final {
+    AstVar* drivingSelResp = nullptr;
+    AstVar* selResp = nullptr;
+    AstVar* hookedVarp = nullptr;
+};
 struct DTypeCache final {
     AstBasicDType* stringDTypep = nullptr;
     AstBasicDType* intDTypep = nullptr;
@@ -176,6 +184,28 @@ struct PathFilterResult final {
     AstArraySel* partArraySelp = nullptr;  // Inner arraysel: hookPath[i]
     AstArraySel* targetArraySelp = nullptr;  // Outer arraysel: hookPath[i][0]
 };
+// A target path provided by the testbench that is not matched by any of the case item provides
+// a warning
+static void appendDfltCase(const std::unordered_map<AstNodeModule*, AstCase*>& caseCache) {
+    for (const auto& [modp, casep] : caseCache) {
+        if (!casep) continue;
+        FileLine* const fl = casep->fileline();
+        const AstVarRef* const condRefp = VN_CAST(casep->exprp(), VarRef);
+        if (!condRefp) continue;  // Not one of ours
+        AstVar* const targetVarp = condRefp->varp();
+        AstConst* const emptyp = new AstConst{fl, AstConst::VerilogStringLiteral{}, ""};
+        AstNeqN* const namedp = new AstNeqN{fl, new AstVarRef{fl, targetVarp, VAccess::READ},
+                                            new AstCvtPackString{fl, emptyp}};
+        AstDisplay* const warnp
+            = new AstDisplay{fl, VDisplayType::DT_WARNING,
+                             "DPI-hook: bound path part '%0s' matches nothing in '"
+                                 + modp->prettyName() + "'; this target stays inactive",
+                             nullptr, new AstVarRef{fl, targetVarp, VAccess::READ}};
+        // A warning provides the simulation time
+        warnp->fmtp()->timeunit(modp->timeunit());
+        casep->addItemsp(new AstCaseItem{fl, nullptr, new AstIf{fl, namedp, warnp}});
+    }
+}
 static PathFilterResult buildPathFilter(const PathFilterConfig& cfg) {
     AstNodeModule* const modp = cfg.modp;
     FileLine* const fl = modp->fileline();
@@ -1496,6 +1526,935 @@ public:
     }
 };
 
+class DPIOverrideBuilder final {
+    struct RhsReplaceEntry final {
+        AstNodeExpr* rhsp = nullptr;  // Driving rhs expression (was the map key's second element)
+        SelResEntry entry;  // Selection-result payload (hookedVarp, selResp, drivingSelResp)
+    };
+    // Unified read view over both driver sources (m_selResMap + m_rhsReplaceEntries) so the
+    // insertion loops iterate a single sequence instead of duplicating logic per container
+    struct DriverView final {
+        SelResEntry* payloadp = nullptr;
+        AstNodeExpr* drivingExprp = nullptr;  // non-null only for rhs-expression drivers
+    };
+    // Members
+    AstBasicDType* m_idDTypep = nullptr;
+    AstNodeModule* m_targetModp;  // Provided by constructor (module or interface)
+    AstFunc* m_funcp = nullptr;
+    AstTask* m_taskp = nullptr;
+    AstTypeTable* m_typeTablep;  // Provided by constructor
+    AstVar* m_condVarp = nullptr;
+    AstVar* m_caseIdVarp
+        = nullptr;  // Per-target case-id, read by the DPI callback (see insCaseIdVarp)
+    AstVar* m_dpiTriggerp;  // Provided by constructor
+    AstVar* m_selResp = nullptr;
+    AstVar* m_preVarp = nullptr;  // Intermediate the partial drivers write to
+    AstArraySel* m_viewSelp = nullptr;  // The element view's own read; never redirected
+    AstNodeExpr* m_viewExprp = nullptr;  // The member/index leaf view's own read; never redirected
+    HookInsertEntry& m_targetEntry;  // Provided by constructor
+    std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& m_selResMap;
+    std::vector<RhsReplaceEntry> m_rhsReplaceEntries;
+    std::unordered_map<AstNodeModule*, AstCase*>& m_caseCache;  // Provided by constructor
+    std::unordered_map<AstNodeModule*, AstVar*>&
+        m_targetLoopVarCache;  // Loop index var of each module's DPIHOOK_TARGET_FILTER
+
+    // Methods
+    std::vector<DriverView> collectDrivers(AstVar* ownerVarp) {
+        std::vector<DriverView> drivers;
+        for (auto& [key, entry] : m_selResMap) {
+            if (key.first == ownerVarp) drivers.push_back(DriverView{&entry, nullptr});
+        }
+        for (auto& rhs : m_rhsReplaceEntries) {
+            drivers.push_back(DriverView{&rhs.entry, rhs.rhsp});
+        }
+        return drivers;
+    }
+    AstAlways* createHandler(AstVar* hookedVarp, AstVar* targetVarp, AstVar* selResp,
+                             AstNodeExpr* drivingRhsp) {
+        FileLine* const fl = m_targetModp->fileline();
+        AstNodeExpr* drivingVarRefp = nullptr;
+
+        // Not targetVarp: this hook drives it, so reading it back would form a loop
+        AstVar* const sourceValuep = m_preVarp ? m_preVarp : targetVarp;
+
+        // The unperturbed (passthrough) value of the driven signal.
+        AstNodeExpr* origThenp = nullptr;
+        if (drivingRhsp) {
+            origThenp = drivingRhsp->cloneTree(false);
+        } else if (sourceValuep) {
+            origThenp = new AstVarRef{fl, sourceValuep, VAccess::READ};
+        }
+
+        // Only evaluate fault callback when hook is actually bound at runtime
+        AstNode* thenp = nullptr;
+        if (m_taskp) {
+            AstTaskRef* const taskRefp = new AstTaskRef{fl, m_taskp, nullptr};
+            taskRefp->addArgsp(new AstArg{fl, "", new AstVarRef{fl, hookedVarp, VAccess::WRITE}});
+            finalizeFuncRef(taskRefp, sourceValuep, drivingRhsp);
+            thenp = new AstStmtExpr{fl, taskRefp};
+        } else {
+            AstFuncRef* const funcRefp = new AstFuncRef{fl, m_funcp, nullptr};
+            finalizeFuncRef(funcRefp, sourceValuep, drivingRhsp);
+            thenp = new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, funcRefp};
+        }
+        AstNode* const elsep
+            = origThenp
+                  ? new AstAssign{fl, new AstVarRef{fl, hookedVarp, VAccess::WRITE}, origThenp}
+                  : nullptr;
+        AstIf* const ifp
+            = new AstIf{fl, new AstVarRef{fl, m_condVarp, VAccess::READ}, thenp, elsep};
+        AstAlways* const dpiAlwaysp = new AstAlways{fl, VAlwaysKwd::ALWAYS_COMB, nullptr, ifp};
+        m_targetModp->addStmtsp(dpiAlwaysp);
+
+        AstVarRef* const dpiHookedVarRefp = new AstVarRef{fl, hookedVarp, VAccess::READ};
+        AstVarRef* const selVarRefp = new AstVarRef{fl, m_condVarp, VAccess::READ};
+        if (sourceValuep) drivingVarRefp = new AstVarRef{fl, sourceValuep, VAccess::READ};
+        if (drivingRhsp) drivingVarRefp = drivingRhsp->cloneTree(false);
+        AstCond* const condp = new AstCond{fl, selVarRefp, dpiHookedVarRefp, drivingVarRefp};
+        AstVarRef* const selResRefp = new AstVarRef{fl, selResp, VAccess::WRITE};
+        AstAssignW* const assignwp = new AstAssignW{fl, selResRefp, condp};
+        AstAlways* const alwaysp = new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr, assignwp};
+        return alwaysp;
+    }
+    AstNodeFTask* finalizeFunc(AstNodeFTask* funcp, AstVar* drivingVarp) {
+        if (!m_idDTypep) {
+            m_idDTypep = new AstBasicDType{funcp->fileline(), VBasicDTypeKwd::INT};
+            m_idDTypep->generic(true);
+            m_typeTablep->addTypesp(m_idDTypep);
+        }
+        AstVar* const insIDp = new AstVar{funcp->fileline(), VVarType::PORT, "insID", m_idDTypep};
+        insIDp->direction(VDirection::INPUT);
+        insIDp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+        insIDp->funcLocal(true);
+        funcp->addStmtsp(insIDp);
+
+        AstVar* const dpiTriggerp = m_dpiTriggerp->cloneTree(false);
+        dpiTriggerp->varType(VVarType::PORT);
+        dpiTriggerp->direction(VDirection::INPUT);
+        dpiTriggerp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+        dpiTriggerp->funcLocal(true);
+        funcp->addStmtsp(dpiTriggerp);
+
+        AstVar* const varXFunc = drivingVarp->cloneTree(false);
+        varXFunc->direction(VDirection::INPUT);
+        varXFunc->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+        varXFunc->funcLocal(true);
+        funcp->addStmtsp(varXFunc);
+
+        return funcp;
+    }
+    void finalizeFuncRef(AstNodeFTaskRef* funcRefp, AstVar* targetVarp, AstNodeExpr* drivingRhsp) {
+        AstVarRef* const caseIdRefp
+            = new AstVarRef{funcRefp->fileline(), m_caseIdVarp, VAccess::READ};
+        AstVarRef* const triggerRefp
+            = new AstVarRef{funcRefp->fileline(), m_dpiTriggerp, VAccess::READ};
+        funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", caseIdRefp});
+        funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", triggerRefp});
+        if (drivingRhsp) {
+            funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", drivingRhsp});
+            return;
+        }
+        AstVarRef* const varrefp = new AstVarRef{funcRefp->fileline(), targetVarp, VAccess::READ};
+        funcRefp->addArgsp(new AstArg{funcRefp->fileline(), "", varrefp});
+    }
+    AstNode* createDPIInterface() {
+        AstVar* const targetVarp
+            = m_targetEntry.dpiHookedVarp ? m_targetEntry.dpiHookedVarp : m_targetEntry.origVarp;
+        const string callback = m_targetEntry.callback;
+        if (targetVarp->basicp()->isLiteralType() || targetVarp->basicp()->implicit()) {
+            if (targetVarp->width() > DPIHOOK_MAX_FUNC_WIDTH) {
+                AstTask* const taskp = new AstTask{m_targetModp->fileline(), callback, nullptr};
+                AstVar* const resultp = new AstVar{m_targetModp->fileline(), VVarType::PORT,
+                                                   "result", targetVarp->dtypep()};
+                resultp->direction(VDirection::OUTPUT);
+                resultp->lifetime(VLifetime::AUTOMATIC_IMPLICIT);
+                resultp->funcLocal(true);
+                taskp->addStmtsp(resultp);
+                return finalizeFunc(taskp, targetVarp);
+            }
+            AstBasicDType* const basicDTypep
+                = new AstBasicDType{m_targetModp->fileline(),
+                                    getBasicDType(targetVarp->width(), targetVarp->basicp())};
+            basicDTypep->generic(true);
+            m_typeTablep->addTypesp(basicDTypep);
+            AstVar* const returnVarp
+                = new AstVar{m_targetModp->fileline(), VVarType::VAR, callback, basicDTypep};
+            returnVarp->direction(VDirection::OUTPUT);
+            returnVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
+            returnVarp->funcLocal(true);
+            returnVarp->funcReturn(true);
+            returnVarp->dtypeChgSigned();
+            AstFunc* const funcp
+                = new AstFunc{m_targetModp->fileline(), callback, nullptr, returnVarp};
+            funcp->dtypep(targetVarp->dtypep());
+            funcp->dtypeChgSigned();
+            return finalizeFunc(funcp, targetVarp);
+        }
+        // Unreachable: the finder rejects a target whose basic type is neither
+        // literal nor implicit before an entry reaches builder
+        targetVarp->v3fatalSrc("DPI-hook target survived the finder's type check");
+        return nullptr;
+    }
+    AstVar* findPathVarp() {
+        const bool isIface = VN_IS(m_targetModp, Iface);
+        for (AstNode* level2p = m_targetModp->op2p(); level2p; level2p = level2p->nextp()) {
+            AstVar* const varp = VN_CAST(level2p, Var);
+            if (varp && (varp->isInput() || isIface) && varp->name() == "DPIHOOK_PATH")
+                return varp;
+        }
+        // Path router always adds DPIHOOK_PATH to target container before override builder runs
+        m_targetModp->v3fatalSrc("DPI-hook path input missing in target container");
+        return nullptr;
+    }
+    AstVar* getCaseIdp(AstNodeModule* modp) {
+        const bool isIface = VN_IS(modp, Iface);
+        for (AstNode* stmtsp = modp->stmtsp(); stmtsp; stmtsp = stmtsp->nextp()) {
+            AstVar* const varp = VN_CAST(stmtsp, Var);
+            if (!varp) continue;
+            if ((varp->isInput() || isIface) && varp->name() == "DPIHOOK_CASE_ID") return varp;
+        }
+        return nullptr;
+    }
+    bool hasFuncOrTask() {
+        for (AstNode* level2p = m_targetModp->op2p(); level2p; level2p = level2p->nextp()) {
+            m_funcp = VN_CAST(level2p, Func);
+            m_taskp = VN_CAST(level2p, Task);
+            if (m_taskp && level2p->name() == m_targetEntry.callback) return true;
+            if (m_funcp && level2p->name() == m_targetEntry.callback) return true;
+        }
+        return false;
+    }
+    AstCase* findTargetFilter() const {
+        const auto it = m_caseCache.find(m_targetModp);
+        return it != m_caseCache.end() ? it->second : nullptr;
+    }
+    VBasicDTypeKwd getBasicDType(int rangeValue, AstBasicDType* basicDTypep) {
+        VBasicDTypeKwd kwd;
+        if (rangeValue <= 1) {
+            kwd = VBasicDTypeKwd::BIT;
+        } else if (rangeValue <= 8) {
+            kwd = VBasicDTypeKwd::BYTE;
+        } else if (rangeValue <= 16) {
+            kwd = VBasicDTypeKwd::SHORTINT;
+        } else if (rangeValue <= 32) {
+            kwd = VBasicDTypeKwd::INT;
+        } else if (rangeValue <= DPIHOOK_MAX_FUNC_WIDTH) {
+            kwd = VBasicDTypeKwd::LONGINT;
+        } else {
+            kwd = basicDTypep->keyword();
+        }
+        return kwd;
+    }
+    void createAssignp(AstVar* targetVarp) {
+        AstVarRef* const selResp
+            = new AstVarRef{m_targetModp->fileline(), m_selResp, VAccess::READ};
+        AstVarRef* const targetVarRefp
+            = new AstVarRef{m_targetModp->fileline(), m_targetEntry.origVarp, VAccess::WRITE};
+        AstAssignW* const assignp
+            = new AstAssignW{m_targetModp->fileline(), targetVarRefp, selResp};
+        AstAlways* const alwaysp
+            = new AstAlways{m_targetModp->fileline(), VAlwaysKwd::CONT_ASSIGN, nullptr, assignp};
+        m_targetModp->addStmtsp(alwaysp);
+    }
+    void editAssignp(AstVar* targetVarp, AstVar* selRespI) {
+        for (auto& assign : m_targetEntry.assignps) {
+            AstNodeExpr* const rhsp = assign->rhsp();
+            AstVarRef* const lhsp = VN_CAST(assign->lhsp(), VarRef);
+            bool foundRef = false;
+            rhsp->foreach([&](AstNode* nodep) {
+                if (AstVarRef* const varRefp = VN_CAST(nodep, VarRef)) {
+                    if (varRefp->varp() == targetVarp) {
+                        foundRef = true;
+                        AstVar* const selVar = targetVarp->isOutputish() ? selRespI : m_selResp;
+                        AstVarRef* const selResRefp
+                            = new AstVarRef{assign->fileline(), selVar, VAccess::READ};
+                        // lhsp is null when LHS is not a plain VarRef (e.g.
+                        // `assign arr[0] = target;`)-> driver has no m_selResMap entry to update
+                        // But RHS varref must still be redirected to selRes variable below
+                        if (lhsp) {
+                            const auto it = m_selResMap.find({lhsp->varp(), varRefp->varp()});
+                            if (it != m_selResMap.end()) it->second.drivingSelResp = selVar;
+                        }
+                        varRefp->replaceWith(selResRefp);
+                    }
+                }
+            });
+            if (!foundRef) {
+                AstVar* const selVar = targetVarp->isOutputish() ? selRespI : m_selResp;
+                AstVarRef* const selResRefp
+                    = new AstVarRef{assign->fileline(), selVar, VAccess::READ};
+                rhsp->replaceWith(selResRefp);
+            }
+        }
+    }
+    // Redirect a collected read to `selResp`
+    void redirectReadRef(AstNodeVarRef* refp, AstVar* selResp) {
+        if (VN_IS(refp, VarXRef) && !VN_IS(m_targetModp, Iface)) {
+            refp->replaceWith(new AstVarRef{refp->fileline(), selResp, VAccess::READ});
+            VL_DO_DANGLING(refp->deleteTree(), refp);
+        } else {
+            refp->varp(selResp);
+            refp->name(selResp->name());
+        }
+    }
+    void editVarRefp(AstNodeVarRef* varRefp = nullptr) {
+        if (varRefp) {
+            redirectReadRef(varRefp, m_selResp);
+            return;
+        }
+        for (AstNodeVarRef* const refp : m_targetEntry.varRefps) redirectReadRef(refp, m_selResp);
+        for (AstVarXRef* const xrp : m_targetEntry.xmrRefps) {
+            xrp->varp(m_selResp);
+            xrp->name(m_selResp->name());
+        }
+    }
+    bool routePartialDrivers(AstVar* targetVarp) {
+        if (!targetVarp->isOutputish()) return false;
+        const bool partial
+            = std::any_of(m_targetEntry.assignps.begin(), m_targetEntry.assignps.end(),
+                          [](AstNodeAssign* ap) { return !VN_IS(ap->lhsp(), VarRef); });
+        if (!partial) return false;
+        m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               targetVarp->name() + "_preHook", targetVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(false);
+        m_targetModp->addStmtsp(m_preVarp);
+        for (AstNodeAssign* assignp : m_targetEntry.assignps) {
+            assignp->lhsp()->foreach([&](AstNode* nodep) {
+                if (AstVarRef* const vrp = VN_CAST(nodep, VarRef)) {
+                    if (vrp->varp() == targetVarp) vrp->varp(m_preVarp);
+                }
+            });
+        }
+        m_targetEntry.assignps.clear();  // Target has no drivers left
+        return true;
+    }
+    bool routePinDrivers(AstVar* targetVarp) {
+        if (!targetVarp->isOutputish() || !m_targetEntry.assignps.empty()) return false;
+        std::vector<AstVarRef*> pinRefps;
+        m_targetModp->foreach([&](AstNode* nodep) {
+            AstPin* const pinp = VN_CAST(nodep, Pin);
+            if (!pinp || !pinp->exprp()) return;
+            pinp->exprp()->foreach([&](AstNode* np) {
+                AstVarRef* const vrp = VN_CAST(np, VarRef);
+                if (vrp && vrp->varp() == targetVarp && vrp->access().isWriteOrRW())
+                    pinRefps.push_back(vrp);
+            });
+        });
+        if (pinRefps.empty()) return false;
+        m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               targetVarp->name() + "_preHook", targetVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(false);
+        m_targetModp->addStmtsp(m_preVarp);
+        for (AstVarRef* const vrp : pinRefps) vrp->varp(m_preVarp);
+        return true;
+    }
+    void addIfaceModportMember(AstVar* varp, VDirection::en direction) {
+        AstIface* const ifacep = VN_CAST(m_targetModp, Iface);
+        if (!ifacep) return;
+        for (AstNode* stmtp = ifacep->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+            if (AstModport* const modportp = VN_CAST(stmtp, Modport)) {
+                modportp->addVarsp(
+                    new AstModportVarRef{varp->fileline(), varp->name(), direction});
+            }
+        }
+    }
+    bool routeIfaceDrivers(AstVar* targetVarp) {
+        if (!VN_IS(m_targetModp, Iface) || m_targetEntry.wrRefps.empty()) return false;
+        m_preVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               targetVarp->name() + "_preHook", targetVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(false);
+        m_targetModp->addStmtsp(m_preVarp);
+        addIfaceModportMember(m_preVarp, VDirection::OUTPUT);
+        for (AstNodeVarRef* const refp : m_targetEntry.wrRefps) {
+            refp->varp(m_preVarp);
+            refp->name(m_preVarp->name());
+        }
+        return true;
+    }
+    bool routeElementTarget(AstVar* targetVarp) {
+        if (!m_targetEntry.elemIndex()) return false;
+        if (!VN_IS(targetVarp->dtypep()->skipRefp(), UnpackArrayDType)) return true;
+        const uint32_t idx = m_targetEntry.elemIndex().value();
+        FileLine* const fl = m_targetModp->fileline();
+        m_preVarp
+            = new AstVar{fl, VVarType::VAR, targetVarp->name() + "_elem" + std::to_string(idx),
+                         m_targetEntry.dpiHookedVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(false);
+        m_targetModp->addStmtsp(m_preVarp);
+        AstArraySel* const selp = new AstArraySel{fl, new AstVarRef{fl, targetVarp, VAccess::READ},
+                                                  new AstConst{fl, idx}};
+        selp->dtypep(m_preVarp->dtypep());
+        m_viewSelp = selp;
+        m_targetModp->addStmtsp(
+            new AstAlways{fl, VAlwaysKwd::CONT_ASSIGN, nullptr,
+                          new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, selp}});
+        return true;
+    }
+    // Walk every module->read that reaches the target through a cross-module reference is seen
+    template <typename Func>
+    static void foreachModule(Func&& f) {
+        for (AstNodeModule* modp = v3Global.rootp()->modulesp(); modp;
+             modp = VN_AS(modp->nextp(), NodeModule)) {
+            modp->foreach(f);
+        }
+    }
+    static AstNodeVarRef* readRootRefp(AstNode* nodep) {
+        while (nodep) {
+            if (AstNodeVarRef* const vrp = VN_CAST(nodep, NodeVarRef)) return vrp;
+            nodep = aggSelFromp(nodep);
+        }
+        return nullptr;
+    }
+    static void replaceReadWithSelp(AstNodeExpr* readp, const AstNodeVarRef* rootp, AstVar* selp) {
+        FileLine* const fl = readp->fileline();
+        const AstVarXRef* const xrp = VN_CAST(rootp, VarXRef);
+        AstNodeExpr* const newp
+            = xrp ? static_cast<AstNodeExpr*>(
+                        new AstVarXRef{fl, selp, xrp->dotted(), VAccess::READ})
+                  : static_cast<AstNodeExpr*>(new AstVarRef{fl, selp, VAccess::READ});
+        readp->replaceWith(newp);
+        VL_DO_DANGLING(readp->deleteTree(), readp);
+    }
+    void redirectElementReads(AstVar* targetVarp) {
+        const uint32_t idx = m_targetEntry.elemIndex().value();
+        std::vector<std::pair<AstArraySel*, AstNodeVarRef*>> reads;
+        foreachModule([&](AstNode* nodep) {
+            AstArraySel* const aselp = VN_CAST(nodep, ArraySel);
+            if (!aselp || aselp == m_viewSelp) return;  // keep the view's own read
+            AstNodeVarRef* const vrp = VN_CAST(aselp->fromp(), NodeVarRef);
+            if (!vrp || vrp->varp() != targetVarp || !vrp->access().isReadOnly()) return;
+            const AstConst* const idxp = VN_CAST(aselp->bitp(), Const);
+            if (!idxp || idxp->toUInt() != idx) return;
+            reads.emplace_back(aselp, vrp);
+        });
+        for (const auto& [aselp, rootp] : reads) replaceReadWithSelp(aselp, rootp, m_selResp);
+    }
+    struct ChainStep final {
+        enum Kind : uint8_t { ARRAYSEL, STRUCTSEL, BITSEL } kind = ARRAYSEL;
+        uint32_t index = 0;  // ARRAYSEL
+        string member;  // STRUCTSEL
+        int lsb = 0;  // BITSEL
+        int width = 0;  // BITSEL
+        AstNodeDType* dtypep = nullptr;  // type this step yields
+    };
+    std::vector<ChainStep> accessChainSteps(const AstVar* rootVarp) const {
+        std::vector<ChainStep> steps;
+        AstNodeDType* dtp = rootVarp->dtypep()->skipRefp();
+        for (const StepIntoTarget& step : m_targetEntry.accessPath) {
+            ChainStep out;
+            if (step.isIndex) {
+                AstUnpackArrayDType* const arrp = VN_AS(dtp, UnpackArrayDType);
+                out.kind = ChainStep::ARRAYSEL;
+                out.index = step.index;
+                out.dtypep = arrp->subDTypep();
+            } else {
+                AstStructDType* const sdt = VN_AS(dtp, StructDType);
+                AstNodeDType* memberDtp = nullptr;
+                int msbOff = 0;
+                for (AstMemberDType* m = sdt->membersp(); m;
+                     m = VN_CAST(m->nextp(), MemberDType)) {
+                    if (m->name() == step.member) {
+                        memberDtp = m->subDTypep();
+                        break;
+                    }
+                    msbOff += aggBitWidth(m->subDTypep());
+                }
+                out.dtypep = memberDtp;
+                if (sdt->packed()) {
+                    out.kind = ChainStep::BITSEL;
+                    out.width = memberDtp->width();
+                    out.lsb = sdt->width() - msbOff - out.width;
+                } else {
+                    out.kind = ChainStep::STRUCTSEL;
+                    out.member = step.member;
+                }
+            }
+            dtp = out.dtypep->skipRefp();
+            steps.push_back(out);
+        }
+        return steps;
+    }
+    // Build READ select chain rootVarp<accessPath> (e.g. u.arr[2].x) with dtypes set and
+    // returning the outermost (leaf) expression
+    AstNodeExpr* buildAccessChain(AstVar* rootVarp, FileLine* fl) {
+        AstNodeExpr* curp = new AstVarRef{fl, rootVarp, VAccess::READ};
+        for (const ChainStep& step : accessChainSteps(rootVarp)) {
+            AstNodeExpr* nextp = nullptr;
+            switch (step.kind) {
+            case ChainStep::ARRAYSEL:
+                nextp = new AstArraySel{fl, curp, new AstConst{fl, step.index}};
+                break;
+            case ChainStep::STRUCTSEL: nextp = new AstStructSel{fl, curp, step.member}; break;
+            case ChainStep::BITSEL: nextp = new AstSel{fl, curp, step.lsb, step.width}; break;
+            }
+            nextp->dtypep(step.dtypep);
+            curp = nextp;
+        }
+        return curp;
+    }
+    // Whether `exprp` is exactly the READ select chain rootVarp<accessPath>
+    bool matchesAccessChain(const AstNode* exprp, const AstVar* rootVarp) const {
+        const std::vector<ChainStep> steps = accessChainSteps(rootVarp);
+        const AstNode* curp = exprp;
+        for (size_t n = steps.size(); n-- > 0;) {  // outermost select first
+            const ChainStep& step = steps[n];
+            switch (step.kind) {
+            case ChainStep::ARRAYSEL: {
+                const AstArraySel* const aselp = VN_CAST(curp, ArraySel);
+                if (!aselp) return false;
+                const AstConst* const c = VN_CAST(aselp->bitp(), Const);
+                if (!c || c->toUInt() != step.index) return false;
+                curp = aselp->fromp();
+                break;
+            }
+            case ChainStep::STRUCTSEL: {
+                const AstStructSel* const ssp = VN_CAST(curp, StructSel);
+                if (!ssp || ssp->name() != step.member) return false;
+                curp = ssp->fromp();
+                break;
+            }
+            case ChainStep::BITSEL: {
+                const AstSel* const selp = VN_CAST(curp, Sel);
+                if (!selp || selp->widthConst() != step.width) return false;
+                const AstConst* const lsbp = VN_CAST(selp->lsbp(), Const);
+                if (!lsbp || static_cast<int>(lsbp->toUInt()) != step.lsb) return false;
+                curp = selp->fromp();
+                break;
+            }
+            }
+        }
+        const AstNodeVarRef* const vrp = VN_CAST(curp, NodeVarRef);
+        return vrp && vrp->varp() == rootVarp && vrp->access().isReadOnly();
+    }
+    // Give a member/index-path target a scalar view of the addressed leaf, driven
+    // continuously from the leaf access chain (the counterpart of routeElementTarget)
+    bool routeMemberTarget(AstVar* targetVarp) {
+        if (!m_targetEntry.hasMemberStep()) return false;
+        FileLine* const fl = m_targetModp->fileline();
+        m_preVarp = new AstVar{fl, VVarType::VAR, hookBaseName(targetVarp) + "_leaf",
+                               m_targetEntry.dpiHookedVarp->dtypep()};
+        m_preVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_preVarp->trace(false);
+        m_targetModp->addStmtsp(m_preVarp);
+        AstNodeExpr* const viewp = buildAccessChain(targetVarp, fl);
+        m_viewExprp = viewp;
+        m_targetModp->addStmtsp(new AstAlways{
+            fl, VAlwaysKwd::CONT_ASSIGN, nullptr,
+            new AstAssignW{fl, new AstVarRef{fl, m_preVarp, VAccess::WRITE}, viewp}});
+        return true;
+    }
+    void redirectMemberReads(AstVar* targetVarp) {
+        std::vector<std::pair<AstNodeExpr*, AstNodeVarRef*>> reads;
+        foreachModule([&](AstNode* nodep) {
+            AstNodeExpr* const exprp = VN_CAST(nodep, NodeExpr);
+            if (!exprp || exprp == m_viewExprp) return;
+            if (!matchesAccessChain(exprp, targetVarp)) return;
+            reads.emplace_back(exprp, readRootRefp(exprp));
+        });
+        for (const auto& [exprp, rootp] : reads) replaceReadWithSelp(exprp, rootp, m_selResp);
+    }
+    void gatherOutputData(AstVar* targetVarp) {
+        for (auto& assign : m_targetEntry.assignps) {
+            AstNodeExpr* const rhsp = assign->rhsp();
+            AstVarRef* const lhsp = VN_CAST(assign->lhsp(), VarRef);
+            bool foundRef = false;
+            bool hasSelResEntry = false;
+            if (AstVarRef* const varRefp = VN_CAST(rhsp, VarRef)) {
+                if (varRefp->varp() == targetVarp) {
+                    foundRef = true;
+                    if (lhsp && lhsp->varp()->isOutputish()) {
+                        m_selResMap[{lhsp->varp(), varRefp->varp()}];
+                    }
+                }
+                hasSelResEntry
+                    = std::any_of(m_selResMap.begin(), m_selResMap.end(), [&](const auto& entry) {
+                          return entry.first.first == targetVarp
+                                 && varRefp->varp()->isDPIHookInserted();
+                      });
+            }
+            if (!foundRef && !hasSelResEntry && targetVarp->isOutputish()) {
+                const bool exists = std::any_of(
+                    m_rhsReplaceEntries.begin(), m_rhsReplaceEntries.end(),
+                    [&](const RhsReplaceEntry& entry) { return entry.rhsp == rhsp; });
+                if (!exists) m_rhsReplaceEntries.push_back(RhsReplaceEntry{rhsp, {}});
+            }
+        }
+    }
+    string bindName(AstVar* targetVarp) const {
+        if (m_targetEntry.isAggregateMirror) return m_targetEntry.aggregateVarp->name();
+        string name = targetVarp->name();
+        if (m_targetEntry.hasMemberStep())
+            for (const StepIntoTarget& step : m_targetEntry.accessPath)
+                name += step.isIndex ? ("[" + std::to_string(step.index) + "]")
+                                     : ("." + step.member);
+        if (!m_targetEntry.genScope.empty()) name = m_targetEntry.genScope + "." + name;
+        return name;
+    }
+    void insCaseItem(AstVar* targetVarp, AstCase* casep) {
+        const string bindName = this->bindName(targetVarp);
+        AstConst* const constPackStringp
+            = new AstConst{m_targetModp->fileline(), AstConst::VerilogStringLiteral{}, bindName};
+        AstCvtPackString* const cvtPackStringp
+            = new AstCvtPackString{m_targetModp->fileline(), constPackStringp};
+        AstVarRef* const condVarRefp
+            = new AstVarRef{m_targetModp->fileline(), m_condVarp, VAccess::WRITE};
+        AstAssign* const assignp = new AstAssign{m_targetModp->fileline(), condVarRefp,
+                                                 new AstConst{m_targetModp->fileline(), 1}};
+        AstVar* const caseIdInputp = getCaseIdp(m_targetModp);
+        const auto loopIt = m_targetLoopVarCache.find(m_targetModp);
+        UASSERT_OBJ(loopIt != m_targetLoopVarCache.end(), m_targetModp,
+                    "DPI-hook: target filter loop variable missing for module");
+        AstVar* const loopVarp = loopIt->second;
+        AstArraySel* const caseIdSelp
+            = new AstArraySel{m_targetModp->fileline(),
+                              new AstVarRef{m_targetModp->fileline(), caseIdInputp, VAccess::READ},
+                              new AstVarRef{m_targetModp->fileline(), loopVarp, VAccess::READ}};
+        AstVarRef* const caseIdVarRefWp
+            = new AstVarRef{m_targetModp->fileline(), m_caseIdVarp, VAccess::WRITE};
+        AstAssign* const caseIdAssignp
+            = new AstAssign{m_targetModp->fileline(), caseIdVarRefWp, caseIdSelp};
+        AstBegin* const caseBodyp = new AstBegin{m_targetModp->fileline(), "", assignp, false};
+        caseBodyp->addStmtsp(caseIdAssignp);
+        AstCaseItem* const caseItemp
+            = new AstCaseItem{m_targetModp->fileline(), cvtPackStringp, caseBodyp};
+        casep->addItemsp(caseItemp);
+        clearBindFlagBeforeLoop(casep);
+    }
+    void clearBindFlagBeforeLoop(AstCase* casep) {
+        AstBegin* outerp = nullptr;
+        for (AstNode* nodep = getParentp(casep); nodep; nodep = getParentp(nodep)) {
+            if (VN_IS(nodep, Always)) break;
+            if (AstBegin* const beginp = VN_CAST(nodep, Begin)) outerp = beginp;
+        }
+        if (!outerp || !outerp->stmtsp()) return;
+        AstVarRef* const condRefp
+            = new AstVarRef{m_targetModp->fileline(), m_condVarp, VAccess::WRITE};
+        outerp->stmtsp()->addHereThisAsNext(new AstAssign{
+            m_targetModp->fileline(), condRefp, new AstConst{m_targetModp->fileline(), 0}});
+    }
+    static AstNodeExpr* aggSelFromp(AstNode* nodep) {
+        if (AstStructSel* const sp = VN_CAST(nodep, StructSel)) return sp->fromp();
+        if (AstArraySel* const ap = VN_CAST(nodep, ArraySel)) return ap->fromp();
+        return nullptr;
+    }
+    void redirectAggregateReads(AstVar* aggVarp) {
+        AstVar* const mirrorp = m_targetEntry.origVarp;
+        const int totalW = mirrorp->width();
+        std::vector<AstNodeExpr*> targets;
+        foreachModule([&](AstNode* nodep) {
+            AstNodeVarRef* const vrp = VN_CAST(nodep, NodeVarRef);
+            if (!vrp || vrp->varp() != aggVarp || !vrp->access().isReadOnly()) return;
+            AstNode* cur = vrp;
+            while (AstNode* const p = cur->backp()) {
+                if (aggSelFromp(p) == cur) {
+                    cur = p;
+                } else {
+                    break;
+                }
+            }
+            for (AstNode* ap = cur->backp(); ap; ap = ap->backp()) {
+                if (AstNodeAssign* const asgp = VN_CAST(ap, NodeAssign)) {
+                    AstVarRef* const lhsv = VN_CAST(asgp->lhsp(), VarRef);
+                    if (lhsv && lhsv->varp() == mirrorp) return;
+                    break;
+                }
+            }
+            AstNodeExpr* const outerp = VN_CAST(cur, NodeExpr);
+            if (!outerp || !aggIsLeafDType(outerp->dtypep())) return;
+            targets.push_back(outerp);
+        });
+        for (AstNodeExpr* const outerp : targets) redirectOneLeafAccess(aggVarp, outerp, totalW);
+    }
+    void redirectOneLeafAccess(AstVar* aggVarp, AstNodeExpr* outerp, int totalW) {
+        FileLine* const fl = outerp->fileline();
+        std::vector<AstNode*> chain;
+        for (AstNode* cur = outerp; aggSelFromp(cur); cur = aggSelFromp(cur)) chain.push_back(cur);
+        std::reverse(chain.begin(), chain.end());
+        AstNodeDType* dtp = aggVarp->dtypep()->skipRefp();
+        AstNodeDType* const idxDTypep
+            = aggVarp->findLogicRangeDType(VNumRange{31, 0}, 32, VSigning::NOSIGN);
+        int constMsbOff = 0;
+        AstNodeExpr* dynp = nullptr;
+        for (AstNode* const stepp : chain) {
+            if (AstStructSel* const sp = VN_CAST(stepp, StructSel)) {
+                AstStructDType* const sdt = VN_CAST(dtp, StructDType);
+                AstNodeDType* memDtp = nullptr;
+                for (AstMemberDType* m = sdt->membersp(); m;
+                     m = VN_CAST(m->nextp(), MemberDType)) {
+                    if (m->name() == sp->name()) {
+                        memDtp = m->subDTypep();
+                        break;
+                    }
+                    constMsbOff += aggBitWidth(m->subDTypep());
+                }
+                dtp = memDtp->skipRefp();
+            } else {
+                AstArraySel* const asp = VN_AS(stepp, ArraySel);
+                AstUnpackArrayDType* const adt = VN_CAST(dtp, UnpackArrayDType);
+                const int stride = aggBitWidth(adt->subDTypep());
+                if (AstConst* const c = VN_CAST(asp->bitp(), Const)) {
+                    constMsbOff += static_cast<int>(c->toUInt()) * stride;
+                } else {
+                    AstMul* const mulp
+                        = new AstMul{fl, asp->bitp()->unlinkFrBack(),
+                                     new AstConst{fl, static_cast<uint32_t>(stride)}};
+                    mulp->dtypep(idxDTypep);
+                    if (!dynp) {
+                        dynp = mulp;
+                    } else {
+                        AstAdd* const addp = new AstAdd{fl, dynp, mulp};
+                        addp->dtypep(idxDTypep);
+                        dynp = addp;
+                    }
+                }
+                dtp = adt->subDTypep()->skipRefp();
+            }
+        }
+        const int leafW = outerp->dtypep()->skipRefp()->width();
+        const int constLsb = totalW - leafW - constMsbOff;
+        AstNodeExpr* lsbp;
+        if (!dynp) {
+            lsbp = new AstConst{fl, static_cast<uint32_t>(constLsb)};
+        } else {
+            AstSub* const subp
+                = new AstSub{fl, new AstConst{fl, static_cast<uint32_t>(constLsb)}, dynp};
+            subp->dtypep(idxDTypep);
+            lsbp = subp;
+        }
+        AstSel* const slicep
+            = new AstSel{fl, new AstVarRef{fl, m_selResp, VAccess::READ}, lsbp, leafW};
+        slicep->dtypep(outerp->dtypep());
+        outerp->replaceWith(slicep);
+        VL_DO_DANGLING(outerp->deleteTree(), outerp);
+    }
+    void insCondResVarp(AstVar* hookedVarp, AstVar* targetVarp) {
+        m_selResp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                               hookBaseName(targetVarp) + "_selRes", hookedVarp->dtypep()};
+        m_selResp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_selResp->trace(false);
+        m_selResp->isDPIHookInserted(true);
+        if (m_targetEntry.isAggregateMirror) {
+            m_targetModp->addStmtsp(m_selResp);
+            redirectAggregateReads(m_targetEntry.aggregateVarp);
+            return;
+        }
+        if (m_targetEntry.elemIndex()) {
+            m_targetModp->addStmtsp(m_selResp);
+            redirectElementReads(targetVarp);
+            return;
+        }
+        if (m_targetEntry.hasMemberStep()) {
+            m_targetModp->addStmtsp(m_selResp);
+            redirectMemberReads(targetVarp);
+            return;
+        }
+        if (targetVarp->isOutputish()) {
+            int idx = 0;
+            const std::vector<DriverView> drivers = collectDrivers(targetVarp);
+            if (drivers.empty()) {
+                m_targetModp->addStmtsp(m_selResp);
+                createAssignp(targetVarp);
+                return;
+            }
+            AstVar* firstSelResp = nullptr;
+            auto applyEntry = [&](SelResEntry& entry) {
+                AstVar* const selRespI = m_selResp->cloneTree(false);
+                selRespI->name(m_selResp->name() + "I" + std::to_string(idx));
+                m_targetModp->addStmtsp(selRespI);
+                if (!firstSelResp) firstSelResp = selRespI;
+                entry.selResp = selRespI;
+                editAssignp(targetVarp, selRespI);
+                idx++;
+            };
+            for (const DriverView& driver : collectDrivers(targetVarp))
+                applyEntry(*driver.payloadp);
+            if (firstSelResp) {
+                for (AstNodeVarRef* const vrp : m_targetEntry.varRefps)
+                    redirectReadRef(vrp, firstSelResp);
+            }
+            return;
+        }
+        m_targetModp->addStmtsp(m_selResp);
+        addIfaceModportMember(m_selResp, VDirection::INPUT);
+        editAssignp(targetVarp, nullptr);
+        // Redirect the collected reads
+        editVarRefp();
+    }
+    string hookBaseName(const AstVar* targetVarp) const {
+        return targetVarp->name()
+               + (m_targetEntry.hasMemberStep() ? m_targetEntry.accessPathSuffix() : "")
+               + m_targetEntry.genScopeSuffix();
+    }
+    void insCondVarp(AstVar* targetVarp) {
+        m_condVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                                hookBaseName(targetVarp) + "_selCond", VFlagLogicPacked{}, 1};
+        m_condVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_condVarp->trace(false);
+        m_targetModp->addStmtsp(m_condVarp);
+    }
+    void insCaseIdVarp(AstVar* targetVarp) {
+        AstBasicDType* const idDTypep
+            = new AstBasicDType{m_targetModp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
+        idDTypep->generic(true);
+        m_typeTablep->addTypesp(idDTypep);
+        m_caseIdVarp = new AstVar{m_targetModp->fileline(), VVarType::VAR,
+                                  hookBaseName(targetVarp) + "_caseId", idDTypep};
+        m_caseIdVarp->lifetime(VLifetime::STATIC_IMPLICIT);
+        m_caseIdVarp->trace(false);
+        m_targetModp->addStmtsp(m_caseIdVarp);
+    }
+    int existingCallbackWidth() const {
+        if (m_taskp) {
+            for (AstNode* np = m_taskp->stmtsp(); np; np = np->nextp()) {
+                AstVar* const varp = VN_CAST(np, Var);
+                if (varp && varp->isFuncLocal() && varp->direction() == VDirection::OUTPUT)
+                    return varp->width();
+            }
+            return -1;
+        }
+        if (m_funcp && m_funcp->dtypep()) return m_funcp->dtypep()->width();
+        return -1;
+    }
+    void insDPITaskOrFunction() {
+        if (!hasFuncOrTask()) {
+            AstNode* const dpip = createDPIInterface();
+            AstFunc* const funcp = VN_CAST(dpip, Func);
+            AstTask* const taskp = VN_CAST(dpip, Task);
+            UASSERT_OBJ(funcp || taskp, m_targetEntry.origVarp,
+                        "DPI-hook: failed to create DPI interface for target");
+            if (funcp) {
+                m_funcp = funcp;
+                m_funcp->dpiImport(true);
+                m_funcp->prototype(true);
+                m_funcp->verilogFunction(true);
+                m_targetModp->addStmtsp(m_funcp);
+            } else if (taskp) {
+                m_taskp = taskp;
+                m_taskp->dpiImport(true);
+                m_taskp->prototype(true);
+                m_targetModp->addStmtsp(m_taskp);
+            }
+        } else {
+            AstVar* const targetVarp = m_targetEntry.dpiHookedVarp ? m_targetEntry.dpiHookedVarp
+                                                                   : m_targetEntry.origVarp;
+            const int existingWidth = existingCallbackWidth();
+            if (existingWidth >= 0 && targetVarp && existingWidth != targetVarp->width()) {
+                targetVarp->v3error("DPI-hook callback '"
+                                    << m_targetEntry.callback
+                                    << "' is reused for a target of width " << targetVarp->width()
+                                    << ", but was already used for width " << existingWidth
+                                    << "; use a distinct callback name per signal width");
+            }
+        }
+    }
+    void insHandler(AstVar* hookedVarp, AstVar* targetVarp) {
+        AstAlways* handlerp = nullptr;
+        if (targetVarp->isOutputish()) {
+            for (const DriverView& driver : collectDrivers(targetVarp)) {
+                handlerp = createHandler(driver.payloadp->hookedVarp,
+                                         driver.drivingExprp ? nullptr
+                                                             : driver.payloadp->drivingSelResp,
+                                         driver.payloadp->selResp, driver.drivingExprp);
+                break;
+            }
+        }
+        if (!handlerp) handlerp = createHandler(hookedVarp, targetVarp, m_selResp, nullptr);
+        m_targetModp->addStmtsp(handlerp);
+    }
+    void insHookedVarp(AstVar* hookedVarp, AstVar* targetVarp) {
+        if (targetVarp->direction() != VDirection::NONE) hookedVarp->direction(VDirection::NONE);
+        if (!targetVarp->isOutputish() || collectDrivers(targetVarp).empty()) {
+            m_targetModp->addStmtsp(hookedVarp);
+            return;
+        }
+        int idx = 0;
+        auto addClone = [&](AstVar*& dstHookedVarp) {
+            AstVar* const clonep = hookedVarp->cloneTree(false);
+            clonep->name(hookedVarp->name() + "I" + std::to_string(idx++));
+            m_targetModp->addStmtsp(clonep);
+            dstHookedVarp = clonep;
+        };
+        for (const DriverView& driver : collectDrivers(targetVarp))
+            addClone(driver.payloadp->hookedVarp);
+    }
+    AstCase* insTargetFilter() {
+        AstVar* const hookPathp = findPathVarp();
+        // Add filter logic providing path information to the modules/instances
+        // Create the loop-index and decoded-part dtypes (fresh per target filter)
+        AstBasicDType* const loopVarTypep
+            = new AstBasicDType{m_targetModp->fileline(), VBasicDTypeKwd::INT, VSigning::SIGNED};
+        loopVarTypep->generic(true);
+        m_typeTablep->addTypesp(loopVarTypep);
+        AstBasicDType* const stringTypep
+            = new AstBasicDType{m_targetModp->fileline(), VBasicDTypeKwd::STRING};
+        stringTypep->generic(true);
+        m_typeTablep->addTypesp(stringTypep);
+        PathFilterConfig cfg;
+        cfg.modp = m_targetModp;
+        cfg.intDTypep = loopVarTypep;
+        cfg.stringDTypep = stringTypep;
+        cfg.hookPathp = hookPathp;
+        cfg.targetVarName = "DPITARGET";
+        cfg.targetVarLifetime = VLifetime::AUTOMATIC_IMPLICIT;
+        cfg.targetVarHasUserInit = true;
+        cfg.declTargetInLoopBody = true;  // declared in the loop body
+        cfg.alwaysName = "DPIHOOK_TARGET_FILTER";
+        cfg.caseCachep = &m_caseCache;
+        cfg.loopVarCachep = &m_targetLoopVarCache;
+        const PathFilterResult res = buildPathFilter(cfg);
+        res.targetArraySelp->dtypep(hookPathp->dtypep());
+        return res.casep;
+    }
+
+public:
+    DPIOverrideBuilder(AstNodeModule* targetModule, AstTypeTable* typeTablep, AstVar* dpiTriggerp,
+                       HookInsertEntry& targetEntry,
+                       std::unordered_map<AstNodeModule*, AstCase*>& caseCache,
+                       std::map<std::pair<AstVar*, AstVar*>, SelResEntry>& selResMap,
+                       std::unordered_map<AstNodeModule*, AstVar*>& targetLoopVarCache)
+        : m_targetModp{targetModule}
+        , m_typeTablep{typeTablep}
+        , m_dpiTriggerp{dpiTriggerp}
+        , m_targetEntry{targetEntry}
+        , m_selResMap{selResMap}
+        , m_caseCache{caseCache}
+        , m_targetLoopVarCache{targetLoopVarCache} {}
+    void insert() {
+        VL_RESTORER(m_selResp);
+        AstVar* const hookedVarp = m_targetEntry.dpiHookedVarp;
+        AstVar* const targetVarp = m_targetEntry.origVarp;
+        // Insert Task/Function
+        insDPITaskOrFunction();
+        // Reroute partial (bit-select) drivers of an output
+        routePartialDrivers(targetVarp);
+        // Reroute a cell-pin driver of an output the same way
+        routePinDrivers(targetVarp);
+        // Give a "var[i]" target a scalar view of the selected element
+        routeElementTarget(targetVarp);
+        // Give a "u.a" member/index target a scalar view of the addressed leaf
+        routeMemberTarget(targetVarp);
+        // Route an interface signal's cross-module drivers through a pre-hook var
+        routeIfaceDrivers(targetVarp);
+        // Gather output information
+        gatherOutputData(targetVarp);
+        // Insert hooked vars and selection logic
+        insCondVarp(targetVarp);
+        insCaseIdVarp(targetVarp);
+        insHookedVarp(hookedVarp, targetVarp);
+        insCondResVarp(hookedVarp, targetVarp);
+        // Insert the override handler (createHandler branches func vs. task internally)
+        if (m_funcp || m_taskp) insHandler(hookedVarp, targetVarp);
+        AstCase* casep = findTargetFilter();
+        if (!casep) casep = insTargetFilter();
+        insCaseItem(targetVarp, casep);
+        m_targetEntry.done = true;
+    }
+};
+
 class DPIHookInserter final {
     // Members
     AstNetlist* m_netlistp;
@@ -1520,6 +2479,7 @@ public:
         , m_insCfg{insCfg} {}
 
     void insDPIHooks() {
+        AstTypeTable* const typeTablep = VN_CAST(m_netlistp->miscsp(), TypeTable);
         DTypeCache dtypeCache;
         std::unordered_map<AstNodeModule*, AstCase*> caseCache;
         std::unordered_map<AstNodeModule*, AstVar*> targetLoopVarCache;
@@ -1562,6 +2522,7 @@ public:
                                      = b.origVarp->direction() == VDirection::OUTPUT;
                                  return !aIsOutput && bIsOutput;
                              });
+            std::map<std::pair<AstVar*, AstVar*>, SelResEntry> selResMap;
             // Insert hook logic for each entry
             for (auto& entry : target->entries) {
                 AstVar* const ov = entry.origVarp;
@@ -1591,7 +2552,14 @@ public:
                 const HookInsertEntry* const priorp
                     = existingEntryp(target->hookLogicContainerp(), entry);
                 if (!priorp) {
-                    // Insert the hook logic for this entry
+                    DPIOverrideBuilder insDPIOverrideBuilder{target->hookLogicContainerp(),
+                                                             typeTablep,
+                                                             target->dpiTriggerp,
+                                                             entry,
+                                                             caseCache,
+                                                             selResMap,
+                                                             targetLoopVarCache};
+                    insDPIOverrideBuilder.insert();
                 } else if (priorp->callback != entry.callback) {
                     ov->v3error("DPI-hook target '" << entry.origTarget
                                                     << "' is already hooked with callback '"
@@ -1599,6 +2567,7 @@ public:
                 }
             }
         }
+        appendDfltCase(caseCache);
     }
 };
 
@@ -1630,5 +2599,8 @@ void V3InsertDPIHook::hookInsert(AstNetlist* nodep) {
     // Finder phase: resolve the AST pointers for each configured target.
     { HookInsTargetFndr{nodep, insCfg}; }
     V3Global::dumpCheckGlobalTree("hookInsertFinder", 0, dumpTreeEitherLevel() >= 3);
+    // Insertion phase: mutate the AST using the resolved pointers.
+    DPIHookInserter inserter{nodep, insCfg};
+    inserter.insDPIHooks();
     V3Global::dumpCheckGlobalTree("hookInsertFunction", 0, dumpTreeEitherLevel() >= 3);
 }
